@@ -1,0 +1,17 @@
+streamlit>=1.28.0
+pandas>=2.0.0
+numpy>=1.24.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+yfinance>=0.2.0
+plotly>=5.17.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+openbb>=4.0.0
+openbb-polygon
+openbb-fmp
+openbb-alpha-vantage
+openbb-yfinance
+financetoolkit>=2.0.0
+streamlit-lightweight-charts>=0.7.20
+
