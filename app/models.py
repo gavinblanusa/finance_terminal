@@ -10,7 +10,7 @@ This module defines SQLAlchemy models for:
 - CompanyFundamentals: Cached fundamentals snapshot (revenue, margins, ratios)
 """
 
-from sqlalchemy import Column, Integer, String, Date, Numeric, Enum, DateTime, BigInteger, Float, Text
+from sqlalchemy import Column, Integer, String, Date, Numeric, Enum, DateTime, BigInteger, Float, Text, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 import enum
@@ -158,4 +158,23 @@ class CompanyFundamentals(Base):
 
     def __repr__(self):
         return f"<CompanyFundamentals(ticker='{self.ticker}')>"
+
+
+class PeerOverride(Base):
+    """
+    User-defined peer overrides per focus ticker.
+    is_excluded=True: remove this peer from the list.
+    is_excluded=False: always include this peer (add to list if not from API).
+    """
+    __tablename__ = 'peer_overrides'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    focus_ticker = Column(String(20), nullable=False, index=True)
+    peer_ticker = Column(String(20), nullable=False, index=True)
+    is_excluded = Column(Integer, nullable=False, default=0)  # 1 = excluded, 0 = always include
+
+    __table_args__ = (UniqueConstraint('focus_ticker', 'peer_ticker', name='uq_peer_override_focus_peer'),)
+
+    def __repr__(self):
+        return f"<PeerOverride(focus='{self.focus_ticker}', peer='{self.peer_ticker}', excluded={self.is_excluded})>"
 

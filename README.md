@@ -99,6 +99,7 @@ The tax engine uses **Highest-In-First-Out (HIFO)** methodology:
 - **Price chart**: Primary chart is TradingView-style via `streamlit_lightweight_charts` and `chart_utils` (candlestick + volume); Plotly is used for the TradingView signals chart and rescaling.
 - **Valuation chart**: P/E and revenue over time (yfinance, Alpha Vantage, Finnhub, FMP)
 - **TradingView-style signals**: Stochastic RSI, momentum, supply/demand zones; cached per ticker/timeframe
+- **Competitors**: Peer comparison (same industry + similar market cap via FMP screener); optional sort by description similarity; user overrides (add/remove peers) stored in DB; table with ticker, name, sector, industry, market cap, P/E, revenue TTM. Optional env: `PEERS_COUNTRY`, `PEERS_EXCHANGE`.
 - Company profile, fundamentals, and news (FMP, Finnhub)
 
 ### IPO Vintage Tracker
@@ -159,13 +160,15 @@ Load from `.env` in project root. Used by:
 | `EODHD_API_KEY` | `api_clients.py` | Price/OHLCV fallback (e.g. 20/day) |
 | `USE_OPENBB` | `openbb_adapter.py` | Set to `false` to disable OpenBB and use only fallbacks (default: enabled) |
 | `USE_FINANCETOOLKIT` | `financetoolkit_adapter.py` | Set to `false` to disable FinanceToolkit for fundamentals and current P/E/PEG; app falls back to OpenBB then FMP (default: enabled) |
+| `PEERS_COUNTRY` | `market_data.py` | Optional. Restrict competitor screener to country (e.g. `US`). |
+| `PEERS_EXCHANGE` | `market_data.py` | Optional. Restrict competitor screener to exchange (e.g. `NASDAQ,NYSE`). |
 
 **OpenBB:** The app uses OpenBB as the primary data layer when available (OHLCV, quote, profile, fundamentals, news, IPO prices). Ensure `.env` is loaded before the first OpenBB use (the adapter loads it when imported). After installing or removing OpenBB provider extensions, run `openbb-build` to refresh the Python interface.
 
 ### Persistence and caches
 
-- **PostgreSQL** (`db.py` + `models.py`): `trades`, `watchlist`, `ipo_registry`, `valuation_history`, `company_profile`, `company_fundamentals`.
-- **File caches** (project root): `.market_cache/` (OHLCV, ticker info, TV signals, Alpha Vantage responses), `.ipo_cache/` (IPO calendar JSON), `.edgar_cache/` (EDGAR submissions, 8-K, partnership_events.json).
+- **PostgreSQL** (`db.py` + `models.py`): `trades`, `watchlist`, `ipo_registry`, `valuation_history`, `company_profile`, `company_fundamentals`, `peer_overrides`.
+- **File caches** (project root): `.market_cache/` (OHLCV, ticker info, TV signals, Alpha Vantage responses, peers candidates), `.ipo_cache/` (IPO calendar JSON), `.edgar_cache/` (EDGAR submissions, 8-K, partnership_events.json).
 - **In-memory**: `tax_engine` price cache (15 min TTL).
 
 ### Conventions and gotchas

@@ -12,7 +12,7 @@ For AIs and refactors: this doc explains how data moves through the app and how 
 |------|-------------------|--------------|-------------|
 | **Dashboard** | `dashboard_page()` | `db`, `models` (Trades), `tax_engine` (TaxEngine, portfolio summary, prices) | PostgreSQL (trades) |
 | **Portfolio & Taxes** | `portfolio_taxes_page()` | `db`, `models` (Trades), `tax_engine` (CRUD, HIFO, CSV import, prices) | PostgreSQL (trades) |
-| **Market Analysis** | `market_analysis_page()` | `market_data` (OHLCV, valuation, signals, profile, fundamentals, news); `market_data` may call `api_clients` | `.market_cache/` (file); `valuation_history` (DB) |
+| **Market Analysis** | `market_analysis_page()` | `market_data` (OHLCV, valuation, signals, profile, fundamentals, news, competitors); `market_data` may call `api_clients` | `.market_cache/` (file); `valuation_history`, `peer_overrides` (DB) |
 | **IPO Vintage Tracker** | `ipo_tracker_page()` | `ipo_service`, `db`, `models` (IPO_Registry) | `.ipo_cache/` (file); PostgreSQL (ipo_registry) |
 | **Partnerships** | `partnerships_page()` | `edgar_service`, `partnerships_config` | `.edgar_cache/` (file) |
 | **13F Institutional Holdings** | `thirteenf_page()` | `thirteenf_service`, `thirteenf_config` | `.edgar_cache/13f/` (file) |
@@ -37,6 +37,7 @@ Refactor note: Changing how lots are computed (e.g. LIFO) means changing `TaxEng
 3. **Valuation** (P/E, revenue chart): `market_data.get_valuation_chart_data()` → internally `fetch_valuation_data()` which is **DB-first**: `load_valuation_from_db()`; if DB has enough quarters and recent enough, use it and only fetch current P/E from yfinance. Else fetch from APIs (Alpha Vantage, Finnhub, FMP, yfinance) then **optional** `save_valuation_to_db()` (currently on “Save” button).
 4. **TradingView-style signals**: Computed from OHLCV in `market_data.calculate_tradingview_signals()`. Cached in `.market_cache/{TICKER}_tv_signals_{timeframe}.json`. Currently saved only when user clicks “Save TV”.
 5. **Company profile / fundamentals / news**: `market_data.get_company_profile`, `get_fundamentals_ratios`, `fetch_company_news` — **Fundamentals:** when `USE_FINANCETOOLKIT` is enabled, **FinanceToolkit first** (`financetoolkit_adapter.fetch_fundamentals_financetoolkit`), then OpenBB, then FMP. Otherwise OpenBB first, then FMP. Profile and news: OpenBB first, then FMP/Finnhub. Profile/fundamentals use DB cache (`CompanyProfile`, `CompanyFundamentals`). **Valuation:** current P/E and PEG can optionally come from FinanceToolkit in `fetch_valuation_data()` when enabled; historical P/E and revenue unchanged.
+6. **Competitors**: `market_data.get_competitors(ticker, sort_by, max_peers)` → FMP company screener (industry + market cap, with fallback to sector / sector+wide cap), optional TF-IDF description similarity ranking, user overrides from `peer_overrides` table. Screener result cached in `.market_cache/peers_candidates_{TICKER}.json` (6h). `clear_peers_cache(ticker)` invalidates file cache.
 
 ### OpenBB adapter
 

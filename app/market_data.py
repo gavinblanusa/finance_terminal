@@ -15,7 +15,7 @@ import hashlib
 import requests
 import time
 from datetime import datetime, timedelta, date
-from typing import Optional, Dict, Tuple, List
+from typing import Optional, Dict, Tuple, List, Literal
 from pathlib import Path
 
 import pandas as pd
@@ -257,6 +257,8 @@ def _fetch_and_cache_ticker_info(ticker: str) -> Dict:
         'short_percent': None,
         'analyst_target': None,
         'current_price': None,
+        'longName': None,
+        'shortName': None,
     }
     
     yahoo_succeeded = False
@@ -265,6 +267,8 @@ def _fetch_and_cache_ticker_info(ticker: str) -> Dict:
         stock = yf.Ticker(ticker)
         info = stock.info
         
+        info_data['longName'] = info.get('longName') or info.get('shortName')
+        info_data['shortName'] = info.get('shortName') or info.get('longName')
         info_data['pe_ratio'] = info.get('trailingPE')
         
         # PEG ratio - try multiple sources
@@ -3073,6 +3077,7 @@ def fetch_company_profile_fmp(ticker: str) -> Optional[Dict]:
         item = data[0]
         return {
             "ticker": ticker,
+            "companyName": item.get("companyName") or item.get("company_name"),
             "sector": item.get("sector") or item.get("industry") or None,
             "industry": item.get("industry") or item.get("sector") or None,
             "description": item.get("description"),
@@ -3550,4 +3555,483 @@ def fetch_insider_transactions(
     except Exception as e:
         print(f"[Finnhub Insider] Error for {ticker}: {e}")
         return []
+
+
+# =============================================================================
+# Competitors / Peers (FMP screener + description similarity + overrides)
+# =============================================================================
+
+PEERS_CACHE_HOURS = 6
+PEERS_RESULT_CACHE_MINUTES = 30
+MAX_PEERS_DISPLAY = 8
+
+# Buzzwords to exclude from description similarity (reduce noise)
+PEERS_DESCRIPTION_STOP_WORDS = {
+    "platform", "solutions", "leading", "innovative", "global", "world-class",
+    "ai", "cloud", "digital", "technology", "services", "company", "inc",
+    "ltd", "corp", "the", "and", "for", "with", "its", "our", "we", "are",
+}
+
+# Optional geography filter (FMP screener); set via env PEERS_COUNTRY or PEERS_EXCHANGE
+PEERS_COUNTRY = os.environ.get("PEERS_COUNTRY", "")
+PEERS_EXCHANGE = os.environ.get("PEERS_EXCHANGE", "")
+
+
+def _peers_candidates_cache_path(ticker: str) -> Path:
+    """Cache path for screener candidates per ticker."""
+    CACHE_DIR.mkdir(exist_ok=True)
+    return CACHE_DIR / f"peers_candidates_{ticker.upper()}.json"
+
+
+def _load_peers_candidates_cache(ticker: str) -> Optional[Tuple[List[Dict], str, bool]]:
+    """Load cached screener result: (candidates, fallback_used, used_sector_fallback)."""
+    path = _peers_candidates_cache_path(ticker)
+    if not path.exists():
+        return None
+    try:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime)
+        if datetime.now() - mtime > timedelta(hours=PEERS_CACHE_HOURS):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return (
+            data.get("candidates", []),
+            data.get("fallback_used", "industry"),
+            data.get("used_sector_fallback", False),
+        )
+    except Exception:
+        return None
+
+
+def _save_peers_candidates_cache(ticker: str, candidates: List[Dict], fallback_used: str, used_sector_fallback: bool):
+    """Save screener result to cache."""
+    path = _peers_candidates_cache_path(ticker)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({
+                "candidates": candidates,
+                "fallback_used": fallback_used,
+                "used_sector_fallback": used_sector_fallback,
+            }, f)
+    except OSError:
+        pass
+
+
+def _normalize_industry_for_fmp(industry: Optional[str]) -> Optional[str]:
+    """Normalize profile industry to FMP-style (strip, lower for comparison). FMP often uses Title Case."""
+    if not industry or not isinstance(industry, str):
+        return None
+    s = industry.strip()
+    return s if s else None
+
+
+def _fetch_stock_peers_fmp(ticker: str) -> List[Dict]:
+    """
+    Fetch peer symbols from FMP stock-peers endpoint (same exchange, sector, similar market cap).
+    Often available on free/lower tier when company-screener is restricted.
+    Returns list of dicts with at least 'symbol'.
+    """
+    if not FMP_API_KEY:
+        return []
+    url = f"{FMP_STABLE_URL}/stock-peers"
+    params = {"symbol": ticker.upper().strip(), "apikey": FMP_API_KEY}
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        if r.status_code in (402, 403):
+            return []
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        symbols = []
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    sym = (item.get("symbol") or item.get("Symbol") or "").strip().upper()
+                    if sym and sym != ticker.upper().strip():
+                        symbols.append({"symbol": sym, "sector": item.get("sector"), "industry": item.get("industry"), "marketCap": item.get("marketCap")})
+                elif isinstance(item, str) and item.upper() != ticker.upper().strip():
+                    symbols.append({"symbol": item.upper().strip()})
+        elif isinstance(data, dict):
+            peers_list = data.get("peersList") or data.get("peers") or data.get("symbols") or []
+            for s in peers_list:
+                sym = (s if isinstance(s, str) else (s.get("symbol") or s.get("Symbol") or "")).strip().upper()
+                if sym and sym != ticker.upper().strip():
+                    symbols.append({"symbol": sym})
+        return symbols
+    except Exception as e:
+        print(f"[Peers FMP] stock-peers error: {e}")
+        return []
+
+
+def fetch_peer_candidates_fmp(
+    ticker: str,
+    industry: Optional[str],
+    sector: Optional[str],
+    market_cap: Optional[float],
+    limit: int = 50,
+) -> Tuple[List[Dict], str, bool]:
+    """
+    Fetch peer candidates from FMP company screener with fallback chain.
+    Returns (list of candidate dicts with at least 'symbol', 'sector', 'industry', 'marketCap' when present),
+    fallback_used in ('industry', 'sector', 'sector_wide_cap'),
+    used_sector_fallback (True if industry was not used).
+    """
+    ticker = ticker.upper().strip()
+    if not FMP_API_KEY:
+        return [], "industry", False
+
+    # Try cache first (only use if we have candidates; avoid caching empty after 402)
+    cached = _load_peers_candidates_cache(ticker)
+    if cached is not None and len(cached[0]) > 0:
+        return cached[0][:limit], cached[1], cached[2]
+
+    cap_min = None
+    cap_max = None
+    if market_cap and market_cap > 0:
+        cap_min = int(market_cap * 0.33)
+        cap_max = int(market_cap * 3.0)
+    cap_min_wide = int(market_cap * 0.1) if market_cap and market_cap > 0 else None
+    cap_max_wide = int(market_cap * 10) if market_cap and market_cap > 0 else None
+
+    base_url = f"{FMP_STABLE_URL}/company-screener"
+    params_base = {"apikey": FMP_API_KEY, "limit": limit}
+    if cap_min is not None:
+        params_base["marketCapMoreThan"] = cap_min
+    if cap_max is not None:
+        params_base["marketCapLowerThan"] = cap_max
+    if PEERS_COUNTRY:
+        params_base["country"] = PEERS_COUNTRY
+    if PEERS_EXCHANGE:
+        params_base["exchange"] = PEERS_EXCHANGE
+
+    used_sector_fallback = False
+    fallback_used = "industry"
+
+    def _is_restricted_response(r: "requests.Response") -> bool:
+        """True if FMP returned 402/403 or an error body indicating restricted endpoint."""
+        if r.status_code in (402, 403):
+            return True
+        if r.status_code != 200:
+            return False
+        try:
+            body = r.json()
+            if isinstance(body, dict) and ("Error Message" in body or "Restricted" in str(body).lower() or "subscription" in str(body).lower()):
+                return True
+        except Exception:
+            pass
+        return False
+
+    # (1) Try industry + market cap
+    norm_industry = _normalize_industry_for_fmp(industry)
+    candidates = []
+    screener_restricted = False
+    if norm_industry:
+        params = {**params_base, "industry": norm_industry}
+        try:
+            r = requests.get(base_url, params=params, timeout=15)
+            if _is_restricted_response(r):
+                screener_restricted = True
+            elif r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list) and len(data) >= 3:
+                    candidates = [x for x in data if isinstance(x, dict) and (x.get("symbol") or x.get("Symbol")) != ticker]
+                    fallback_used = "industry"
+        except Exception as e:
+            print(f"[Peers FMP] industry request error: {e}")
+        if not candidates:
+            used_sector_fallback = True
+
+    # (2) If few or none (and screener not restricted), try sector only
+    if not screener_restricted and len(candidates) < 3 and sector:
+        params = {**params_base, "sector": sector.strip()}
+        try:
+            r = requests.get(base_url, params=params, timeout=15)
+            if _is_restricted_response(r):
+                screener_restricted = True
+            elif r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    by_symbol = {str(x.get("symbol") or x.get("Symbol", "")).upper(): x for x in data if isinstance(x, dict)}
+                    by_symbol.pop(ticker, None)
+                    candidates = list(by_symbol.values())
+                    if candidates:
+                        fallback_used = "sector"
+        except Exception as e:
+            print(f"[Peers FMP] sector request error: {e}")
+
+    # (3) If still 0 and not restricted, sector + wider cap
+    if not screener_restricted and len(candidates) == 0 and sector:
+        params = {"apikey": FMP_API_KEY, "limit": limit, "sector": sector.strip()}
+        if cap_min_wide is not None:
+            params["marketCapMoreThan"] = cap_min_wide
+        if cap_max_wide is not None:
+            params["marketCapLowerThan"] = cap_max_wide
+        if PEERS_COUNTRY:
+            params["country"] = PEERS_COUNTRY
+        if PEERS_EXCHANGE:
+            params["exchange"] = PEERS_EXCHANGE
+        try:
+            r = requests.get(base_url, params=params, timeout=15)
+            if _is_restricted_response(r):
+                screener_restricted = True
+            elif r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    by_symbol = {str(x.get("symbol") or x.get("Symbol", "")).upper(): x for x in data if isinstance(x, dict)}
+                    by_symbol.pop(ticker, None)
+                    candidates = list(by_symbol.values())
+                    fallback_used = "sector_wide_cap"
+        except Exception as e:
+            print(f"[Peers FMP] sector_wide_cap request error: {e}")
+
+    # (4) If still no candidates (e.g. screener 402/restricted), try stock-peers endpoint (often on free tier)
+    if len(candidates) == 0:
+        stock_peers = _fetch_stock_peers_fmp(ticker)
+        if stock_peers:
+            candidates = stock_peers
+            fallback_used = "stock_peers"
+            if screener_restricted:
+                print(f"[Peers FMP] Company-screener restricted (402); using stock-peers for {ticker}.")
+
+    # Normalize candidate dicts to have 'symbol'
+    out = []
+    for c in candidates[:limit]:
+        sym = (c.get("symbol") or c.get("Symbol") or "").strip().upper()
+        if not sym:
+            continue
+        out.append({
+            "symbol": sym,
+            "sector": c.get("sector") or c.get("Sector"),
+            "industry": c.get("industry") or c.get("Industry"),
+            "marketCap": c.get("marketCap") or c.get("market_cap"),
+        })
+    if out:
+        _save_peers_candidates_cache(ticker, out, fallback_used, used_sector_fallback)
+    return out, fallback_used, used_sector_fallback
+
+
+def _get_full_description_for_matching(ticker: str) -> str:
+    """
+    Get the fullest available description for a ticker for similarity matching.
+    Uses profile description (full, never truncated) and, if longer, yfinance longBusinessSummary.
+    """
+    desc = ""
+    profile = get_company_profile(ticker)
+    if profile and isinstance(profile.get("description"), str):
+        desc = profile["description"].strip()
+    try:
+        stock = yf.Ticker(ticker)
+        info = getattr(stock, "info", None) or {}
+        yf_summary = info.get("longBusinessSummary") or info.get("description") or ""
+        if isinstance(yf_summary, str) and len(yf_summary.strip()) > len(desc):
+            desc = yf_summary.strip()
+    except Exception:
+        pass
+    return desc
+
+
+def rank_peers_by_description_similarity(
+    focus_description: Optional[str],
+    candidate_symbols: List[str],
+    top_n: int = 5,
+    focus_ticker: Optional[str] = None,
+) -> List[Tuple[str, float]]:
+    """
+    Rank candidate symbols by TF-IDF cosine similarity to focus description.
+    Uses full description text only (no truncation). If focus_ticker is provided and
+    focus_description is short, will try to get a longer description for the focus company.
+    Returns list of (symbol, score) tuples, highest first, length up to top_n.
+    """
+    if not focus_description or not isinstance(focus_description, str):
+        focus_description = ""
+    focus_description = focus_description.strip()
+    if focus_ticker and len(focus_description) < 500:
+        full_focus = _get_full_description_for_matching(focus_ticker)
+        if len(full_focus) > len(focus_description):
+            focus_description = full_focus
+    if not focus_description:
+        return [(s, 0.0) for s in candidate_symbols[:top_n]]
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+    except ImportError:
+        return [(s, 0.0) for s in candidate_symbols[:top_n]]
+
+    def clean(text: str) -> str:
+        if not text:
+            return ""
+        t = text.lower().strip()
+        for w in PEERS_DESCRIPTION_STOP_WORDS:
+            t = t.replace(f" {w} ", " ")
+        return t
+
+    focus_clean = clean(focus_description)
+    if not focus_clean:
+        return [(s, 0.0) for s in candidate_symbols[:top_n]]
+
+    texts = [focus_clean]
+    symbol_to_idx = {}
+    for sym in candidate_symbols:
+        profile = get_company_profile(sym)
+        desc = (profile or {}).get("description") or ""
+        if isinstance(desc, str) and desc.strip():
+            desc = desc.strip()
+        else:
+            try:
+                stock = yf.Ticker(sym)
+                info = getattr(stock, "info", None) or {}
+                desc = (info.get("longBusinessSummary") or info.get("description") or "") or ""
+                if isinstance(desc, str):
+                    desc = desc.strip()
+            except Exception:
+                desc = ""
+        texts.append(clean(desc))
+        symbol_to_idx[len(texts) - 1] = sym
+
+    try:
+        vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
+        X = vectorizer.fit_transform(texts)
+        sims = cosine_similarity(X[0:1], X[1:]).ravel()
+        scored = [(symbol_to_idx[i + 1], float(sims[i])) for i in range(len(candidate_symbols)) if (i + 1) in symbol_to_idx]
+        scored.sort(key=lambda x: -x[1])
+        return scored[:top_n]
+    except Exception as e:
+        print(f"[Peers] description similarity error: {e}")
+        return [(s, 0.0) for s in candidate_symbols[:top_n]]
+
+
+def _get_peer_overrides(focus_ticker: str) -> Tuple[List[str], List[str]]:
+    """Return (excluded_peers, always_include_peers) from DB."""
+    focus_ticker = focus_ticker.upper().strip()
+    try:
+        db = _get_db_session()
+        from models import PeerOverride
+        rows = db.query(PeerOverride).filter(PeerOverride.focus_ticker == focus_ticker).all()
+        excluded = [r.peer_ticker.upper().strip() for r in rows if r.is_excluded == 1]
+        always = [r.peer_ticker.upper().strip() for r in rows if r.is_excluded == 0]
+        db.close()
+        return excluded, always
+    except Exception as e:
+        print(f"[Peers] overrides load error: {e}")
+        try:
+            db.close()
+        except Exception:
+            pass
+        return [], []
+
+
+def get_competitors(
+    ticker: str,
+    sort_by: Literal["industry_size", "description"],
+    max_peers: int = 5,
+) -> Dict:
+    """
+    Get competitor peers for a ticker. Applies user overrides (exclude / always include).
+    Returns dict with keys: peers (list of peer dicts), fallback_used (str), used_sector_fallback (bool).
+    Each peer dict: ticker, name, sector, industry, market_cap, pe_ratio, revenue_ttm, description_match_score (optional).
+    """
+    ticker = ticker.upper().strip()
+    profile = get_company_profile(ticker)
+    summary = None
+    try:
+        summary = get_ticker_summary(ticker)
+    except Exception:
+        pass
+    industry = (profile or {}).get("industry")
+    sector = (profile or {}).get("sector")
+    market_cap = (summary or {}).get("market_cap") if summary else (profile or {}).get("market_cap")
+
+    candidates, fallback_used, used_sector_fallback = fetch_peer_candidates_fmp(
+        ticker, industry, sector, market_cap, limit=30
+    )
+    candidate_symbols = [c.get("symbol") for c in candidates if c.get("symbol")]
+
+    description_scores = {}  # symbol -> score 0-100
+    if sort_by == "description":
+        # Use full description for matching (never truncated). Merge profile + yfinance for longest available.
+        focus_desc = _get_full_description_for_matching(ticker)
+        if focus_desc:
+            ranked = rank_peers_by_description_similarity(focus_desc, candidate_symbols, top_n=max_peers, focus_ticker=ticker)
+            ordered_symbols = [s for s, _ in ranked]
+            description_scores = {s: round(score * 100) for s, score in ranked}
+            for s in candidate_symbols:
+                if s not in ordered_symbols and len(ordered_symbols) < max_peers:
+                    ordered_symbols.append(s)
+        else:
+            ordered_symbols = candidate_symbols[:max_peers]
+    else:
+        ordered_symbols = candidate_symbols[:max_peers]
+
+    excluded, always_include = _get_peer_overrides(ticker)
+    peer_set = [s for s in ordered_symbols if s not in excluded]
+    for a in always_include:
+        if a not in peer_set and len(peer_set) < MAX_PEERS_DISPLAY:
+            peer_set.append(a)
+    peer_set = peer_set[:MAX_PEERS_DISPLAY]
+
+    peers_out = []
+    for sym in peer_set:
+        p_profile = get_company_profile(sym)
+        p_fund = get_fundamentals_ratios(sym)
+        screener_row = next((c for c in candidates if (c.get("symbol") or "").upper() == sym), {})
+        market_cap_val = screener_row.get("marketCap")
+        if market_cap_val is None and p_profile:
+            pass  # could get from summary if needed
+        try:
+            s_sum = get_ticker_summary(sym)
+            if s_sum and market_cap_val is None:
+                market_cap_val = s_sum.get("market_cap")
+        except Exception:
+            pass
+        pe_val = None
+        if p_fund:
+            pe_val = p_fund.get("pe_ratio") or p_fund.get("price_earnings_ratio")
+        if pe_val is None and p_profile:
+            pass
+        ti = None
+        try:
+            ti = _fetch_and_cache_ticker_info(sym)
+            if pe_val is None and ti:
+                pe_val = ti.get("pe_ratio")
+            if market_cap_val is None and ti:
+                market_cap_val = ti.get("market_cap")
+        except Exception:
+            pass
+        rev = (p_fund or {}).get("revenue_ttm")
+        name = (p_profile or {}).get("companyName") or (p_profile or {}).get("company_name") or None
+        if not name and p_profile and isinstance(p_profile.get("description"), str):
+            name = (p_profile["description"][:50] + "…") if len(p_profile["description"]) > 50 else p_profile["description"]
+        if not name and ti:
+            name = ti.get("longName") or ti.get("shortName")
+        if not name:
+            name = sym
+        desc_score = description_scores.get(sym)
+        peers_out.append({
+            "ticker": sym,
+            "name": name[:60] if name else sym,
+            "sector": (p_profile or {}).get("sector") or (screener_row or {}).get("sector") or "—",
+            "industry": (p_profile or {}).get("industry") or (screener_row or {}).get("industry") or "—",
+            "market_cap": market_cap_val,
+            "pe_ratio": pe_val,
+            "revenue_ttm": rev,
+            "description_match_score": desc_score,
+        })
+    return {"peers": peers_out, "fallback_used": fallback_used, "used_sector_fallback": used_sector_fallback}
+
+
+def clear_peers_cache(ticker: Optional[str] = None):
+    """Clear peers candidate cache for a ticker (or all if ticker is None)."""
+    if ticker:
+        path = _peers_candidates_cache_path(ticker.upper().strip())
+        if path.exists():
+            try:
+                path.unlink()
+            except OSError:
+                pass
+    else:
+        for p in CACHE_DIR.glob("peers_candidates_*.json"):
+            try:
+                p.unlink()
+            except OSError:
+                pass
 

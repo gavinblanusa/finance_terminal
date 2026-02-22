@@ -43,6 +43,8 @@ from market_data import (
     save_tv_signals_to_cache,
     load_tv_signals_from_cache,
     check_tv_signals_in_cache,
+    get_competitors,
+    clear_peers_cache,
 )
 from edgar_service import get_partnership_events, refresh_edgar_data
 from plotly_chart_rescale import render_plotly_chart_with_y_rescale
@@ -2031,7 +2033,8 @@ def market_analysis_page():
         ticker_input = st.text_input(
             "🔍 Search Ticker",
             placeholder="Enter ticker symbol (e.g., AAPL, GOOGL, MSFT)",
-            help="Enter a stock ticker to analyze"
+            help="Enter a stock ticker to analyze",
+            key="market_analysis_ticker",
         ).upper().strip()
     
     with col_refresh:
@@ -2721,6 +2724,146 @@ def market_analysis_page():
                                 st.rerun()
                             else:
                                 st.error("❌ Failed to save TradingView signals.")
+                
+                # === COMPETITORS ===
+                st.markdown("---")
+                st.markdown("### Competitors")
+                st.caption("Same industry and similar market cap; optional sort by description match.")
+                with st.expander("How we pick peers", expanded=False):
+                    st.markdown("""
+                    Peers are chosen using **industry** and **similar market cap** (via FMP screener).
+                    When your company's industry doesn't match our data provider's list, we use sector-level peers and note it above the table.
+                    You can sort by **description match** to rank by text similarity to the company description (same candidate set).
+                    Matching uses the **full** company description (not the shortened preview in the profile box above).
+                    Description match ranks by text similarity, not verified competitive relationship; results can include companies that sound similar but operate in different segments.
+                    """)
+                comp_sort = st.radio(
+                    "Sort",
+                    options=["By industry & size", "By description match"],
+                    index=0,
+                    key=f"competitors_sort_{ticker_input}",
+                    horizontal=True,
+                )
+                sort_by_val = "description" if comp_sort == "By description match" else "industry_size"
+                if "peers_refresh_key" not in st.session_state:
+                    st.session_state["peers_refresh_key"] = 0
+                ref_col1, ref_col2 = st.columns([4, 1])
+                with ref_col2:
+                    if st.button("Refresh", key=f"competitors_refresh_{ticker_input}", help="Clear peers cache and reload"):
+                        clear_peers_cache(ticker_input)
+                        st.session_state["peers_refresh_key"] = st.session_state.get("peers_refresh_key", 0) + 1
+                        st.rerun()
+                try:
+                    comp_result = get_competitors(ticker_input, sort_by_val, max_peers=5)
+                    peers_list = comp_result.get("peers") or []
+                    fallback_used = comp_result.get("fallback_used", "industry")
+                    used_sector_fallback = comp_result.get("used_sector_fallback", False)
+                    if fallback_used == "sector":
+                        st.caption("Few peers in this industry; showing sector-level (and similar size) peers.")
+                    elif fallback_used == "sector_wide_cap":
+                        st.caption("Showing sector-level peers with wider size range.")
+                    elif fallback_used == "stock_peers":
+                        st.caption("Using FMP stock-peers (company-screener not available on your plan). Same sector and similar market cap.")
+                    elif used_sector_fallback:
+                        st.caption("Showing sector-level peers (industry not matched).")
+                    if not peers_list:
+                        st.info("No peers found for this industry/market cap. Try another ticker or refresh.")
+                    else:
+                        def _fmt_mc(mc):
+                            if mc is None or mc <= 0:
+                                return "—"
+                            if mc >= 1e12:
+                                return f"${mc / 1e12:.2f}T"
+                            if mc >= 1e9:
+                                return f"${mc / 1e9:.2f}B"
+                            if mc >= 1e6:
+                                return f"${mc / 1e6:.2f}M"
+                            return f"${mc:,.0f}"
+                        rows = []
+                        for p in peers_list:
+                            ticker_display = p.get("ticker") or "—"
+                            name_display = (p.get("name") or ticker_display)[:50]
+                            sector_display = (p.get("sector") or "—")[:20]
+                            industry_display = (p.get("industry") or "—")[:25]
+                            mc_display = _fmt_mc(p.get("market_cap"))
+                            pe_display = f"{p['pe_ratio']:.1f}" if p.get("pe_ratio") is not None else "—"
+                            rev = p.get("revenue_ttm")
+                            rev_display = f"${rev / 1e9:.2f}B" if rev and rev >= 1e9 else (f"${rev / 1e6:.0f}M" if rev and rev >= 1e6 else ("—" if rev is None else f"${rev:,.0f}"))
+                            match_display = str(p.get("description_match_score")) if p.get("description_match_score") is not None else "—"
+                            rows.append({
+                                "Ticker": ticker_display,
+                                "Name": name_display,
+                                "Sector": sector_display,
+                                "Industry": industry_display,
+                                "Market cap": mc_display,
+                                "P/E": pe_display,
+                                "Revenue (TTM)": rev_display,
+                                "Match": match_display,
+                            })
+                        df_comp = pd.DataFrame(rows)
+                        if sort_by_val != "description":
+                            df_comp = df_comp.drop(columns=["Match"], errors="ignore")
+                        st.dataframe(df_comp, use_container_width=True, hide_index=True)
+                        st.caption("Analyze a peer:")
+                        peer_btns = st.columns(min(len(peers_list), 8))
+                        for i, p in enumerate(peers_list[:8]):
+                            pt = p.get("ticker")
+                            if pt and i < len(peer_btns):
+                                with peer_btns[i]:
+                                    if st.button(f"→ {pt}", key=f"analyze_peer_{ticker_input}_{pt}", help=f"Load {pt} in search"):
+                                        st.session_state["market_analysis_ticker"] = pt
+                                        st.rerun()
+                        with st.expander("Edit peers", expanded=False):
+                            st.caption("Custom additions/removals are saved and applied to future loads.")
+                            add_peer = st.text_input("Add ticker to always include", placeholder="e.g. MSFT", key=f"add_peer_{ticker_input}").upper().strip()
+                            if st.button("Add", key=f"add_peer_btn_{ticker_input}") and add_peer:
+                                try:
+                                    db = get_db_session()
+                                    from models import PeerOverride
+                                    existing = db.query(PeerOverride).filter(
+                                        PeerOverride.focus_ticker == ticker_input,
+                                        PeerOverride.peer_ticker == add_peer,
+                                    ).first()
+                                    if not existing:
+                                        db.add(PeerOverride(focus_ticker=ticker_input, peer_ticker=add_peer, is_excluded=0))
+                                        db.commit()
+                                        st.success(f"Added {add_peer} to peers for {ticker_input}.")
+                                    else:
+                                        existing.is_excluded = 0
+                                        db.commit()
+                                        st.success(f"{add_peer} is already in peers.")
+                                    db.close()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed to add: {e}")
+                            for p in peers_list:
+                                pt = p.get("ticker")
+                                if not pt:
+                                    continue
+                                c1, c2 = st.columns([3, 1])
+                                with c2:
+                                    if st.button("Remove", key=f"remove_peer_{ticker_input}_{pt}"):
+                                        try:
+                                            db = get_db_session()
+                                            from models import PeerOverride
+                                            row = db.query(PeerOverride).filter(
+                                                PeerOverride.focus_ticker == ticker_input,
+                                                PeerOverride.peer_ticker == pt,
+                                            ).first()
+                                            if row:
+                                                row.is_excluded = 1
+                                            else:
+                                                db.add(PeerOverride(focus_ticker=ticker_input, peer_ticker=pt, is_excluded=1))
+                                            db.commit()
+                                            db.close()
+                                            clear_peers_cache(ticker_input)
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Failed to remove: {e}")
+                                with c1:
+                                    st.caption(f"**{pt}** — {p.get('name', '')[:40]}")
+                except Exception as e:
+                    st.warning(f"Could not load competitors: {e}")
                 
                 # === NEWS (expander) ===
                 try:
