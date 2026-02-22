@@ -14,4 +14,5 @@ openbb-alpha-vantage
 openbb-yfinance
 financetoolkit>=2.0.0
 streamlit-lightweight-charts>=0.7.20
+finance-calendars>=0.0.7
 

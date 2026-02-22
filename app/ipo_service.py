@@ -118,56 +118,235 @@ def _load_from_cache(cache_name: str) -> Optional[dict]:
         return None
 
 
-def fetch_ipo_calendar(days_ahead: int = 30) -> List[IPOEntry]:
+def _get_finnhub_ipo_list(days_ahead: int) -> List[IPOEntry]:
     """
-    Fetch upcoming IPO calendar from Finnhub API.
-    
-    Uses caching to avoid hitting API rate limits.
-    
-    Args:
-        days_ahead: Number of days to look ahead for IPOs
-        
-    Returns:
-        List of IPOEntry objects for upcoming IPOs
+    Fetch upcoming IPO list from Finnhub API (existing logic).
+    Uses same cache key and behavior: cache hit returns parsed list;
+    no API key or request error returns mock data.
     """
     cache_name = f"ipo_calendar_{days_ahead}d"
-    
-    # Try loading from cache
     cached_data = _load_from_cache(cache_name)
     if cached_data:
         print(f"[Cache Hit] Loaded IPO calendar from cache")
         return _parse_ipo_data(cached_data)
-    
     if not FINNHUB_API_KEY:
         print("[Warning] FINNHUB_API_KEY not set, using mock data")
         return _get_mock_ipo_data()
-    
-    # Calculate date range
     start_date = date.today()
     end_date = start_date + timedelta(days=days_ahead)
-    
     try:
-        # Fetch from Finnhub API
         url = f"{FINNHUB_BASE_URL}/calendar/ipo"
         params = {
             'from': start_date.isoformat(),
             'to': end_date.isoformat(),
             'token': FINNHUB_API_KEY
         }
-        
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
-        
         data = response.json()
-        
-        # Cache the response
         _save_to_cache(cache_name, data)
-        
         return _parse_ipo_data(data)
-        
     except requests.RequestException as e:
         print(f"Error fetching IPO calendar: {e}")
         return _get_mock_ipo_data()
+
+
+def _ipo_entry_to_dict(entry: IPOEntry) -> dict:
+    """Serialize IPOEntry to a JSON-serializable dict (for NASDAQ cache)."""
+    return {
+        'ticker': entry.ticker,
+        'name': entry.name,
+        'exchange': entry.exchange,
+        'ipo_date': entry.ipo_date.isoformat(),
+        'price_range_low': entry.price_range_low,
+        'price_range_high': entry.price_range_high,
+        'ipo_price': entry.ipo_price,
+        'shares_offered': entry.shares_offered,
+        'total_shares': entry.total_shares,
+        'status': entry.status,
+    }
+
+
+def _ipo_entry_from_dict(d: dict) -> IPOEntry:
+    """Deserialize dict (from cache or merge) back to IPOEntry."""
+    ipo_date_str = d.get('ipo_date', '')
+    ipo_date = datetime.strptime(ipo_date_str, '%Y-%m-%d').date() if ipo_date_str else date.today()
+    return IPOEntry(
+        ticker=d.get('ticker', 'N/A'),
+        name=d.get('name', 'Unknown Company'),
+        exchange=d.get('exchange', 'N/A'),
+        ipo_date=ipo_date,
+        price_range_low=d.get('price_range_low'),
+        price_range_high=d.get('price_range_high'),
+        ipo_price=d.get('ipo_price'),
+        shares_offered=d.get('shares_offered'),
+        total_shares=d.get('total_shares'),
+        status=d.get('status', 'expected'),
+    )
+
+
+def _fetch_nasdaq_ipo_list(days_ahead: int) -> List[IPOEntry]:
+    """
+    Fetch upcoming IPO list from NASDAQ via finance_calendars.
+    Uses separate cache key ipo_calendar_{days_ahead}d_nasdaq.
+    On any exception returns [] so Finnhub-only result is still used.
+    """
+    cache_name = f"ipo_calendar_{days_ahead}d_nasdaq"
+    cached = _load_from_cache(cache_name)
+    if cached is not None and isinstance(cached.get('entries'), list):
+        entries = cached.get('entries', [])
+        try:
+            out = [_ipo_entry_from_dict(e) for e in entries]
+            out.sort(key=lambda x: x.ipo_date)
+            return out
+        except Exception as e:
+            print(f"Error deserializing NASDAQ IPO cache: {e}")
+            # Fall through to fetch
+
+    try:
+        from finance_calendars import finance_calendars as fc
+        today = date.today()
+        end_cap = today + timedelta(days=days_ahead)
+        all_entries: List[IPOEntry] = []
+        # Current month and next month (NASDAQ API is month-based)
+        month_start_cur = datetime(today.year, today.month, 1)
+        if today.month == 12:
+            month_start_next = datetime(today.year + 1, 1, 1)
+        else:
+            month_start_next = datetime(today.year, today.month + 1, 1)
+        for month_start in (month_start_cur, month_start_next):
+            if month_start.date() > end_cap:
+                continue
+            try:
+                raw = fc.get_upcoming_ipos_by_month(month_start)
+            except Exception as e:
+                print(f"NASDAQ get_upcoming_ipos_by_month({month_start}) error: {e}")
+                raw = []
+            if raw is None or (hasattr(raw, 'empty') and raw.empty):
+                continue
+            # DataFrame: iterate rows
+            if hasattr(raw, 'itertuples') or hasattr(raw, 'iterrows'):
+                items = list(raw.to_dict('records')) if hasattr(raw, 'to_dict') else []
+            elif isinstance(raw, list):
+                items = raw
+            else:
+                items = []
+            for item in items:
+                entry = _parse_nasdaq_ipo_item(item, end_cap)
+                if entry and entry.ipo_date <= end_cap:
+                    all_entries.append(entry)
+        # Dedupe by (normalized key), prefer entry with more filled fields
+        def _filled(e: IPOEntry) -> int:
+            return sum(1 for x in (e.price_range_low, e.price_range_high, e.shares_offered, e.total_shares) if x is not None)
+        by_key: Dict[Tuple[str, date], IPOEntry] = {}
+        for e in all_entries:
+            k = _normalize_ipo_key(e)
+            if k not in by_key or _filled(e) > _filled(by_key[k]):
+                by_key[k] = e
+        all_entries = sorted(by_key.values(), key=lambda x: x.ipo_date)
+        _save_to_cache(cache_name, {'entries': [_ipo_entry_to_dict(e) for e in all_entries]})
+        return all_entries
+    except Exception as e:
+        print(f"Error fetching NASDAQ IPO calendar: {e}")
+        return []
+
+
+def _normalize_ipo_key(entry: IPOEntry) -> Tuple[str, date]:
+    """Key for deduplication: (normalized company name, ipo_date) so same company from different sources merges."""
+    name = (entry.name or '').strip().lower() if entry.name else ''
+    return (name or 'unknown', entry.ipo_date)
+
+
+def _parse_nasdaq_ipo_item(item, end_cap: date) -> Optional[IPOEntry]:
+    """Map one item from finance_calendars (DataFrame row as dict or object) to IPOEntry. Returns None if no valid date."""
+    try:
+        if hasattr(item, 'get'):
+            d = item
+        elif hasattr(item, 'keys'):
+            d = dict(item)
+        else:
+            d = {}
+        # finance_calendars DataFrame columns: companyName, proposedExchange, proposedSharePrice, sharesOffered, expectedPriceDate, dollarValueOfSharesOffered
+        name = d.get('companyName') or d.get('CompanyName') or d.get('name') or d.get('company') or 'Unknown Company'
+        symbol = d.get('symbol') or d.get('Symbol') or d.get('ticker') or 'N/A'
+        exchange = d.get('proposedExchange') or d.get('exchange') or d.get('Exchange') or 'NASDAQ'
+        raw_date = d.get('expectedPriceDate') or d.get('ExpectedPriceDate') or d.get('date') or d.get('ipoDate') or d.get('offerDate')
+        if raw_date is None or (isinstance(raw_date, float) and pd.isna(raw_date)):
+            return None
+        if isinstance(raw_date, (date, datetime)):
+            ipo_date = raw_date.date() if isinstance(raw_date, datetime) else raw_date
+        else:
+            s = str(raw_date).strip()
+            if not s:
+                return None
+            # Support MM/DD/YYYY (NASDAQ) and YYYY-MM-DD
+            if '/' in s:
+                ipo_date = datetime.strptime(s[:10] if len(s) >= 10 else s, '%m/%d/%Y').date()
+            else:
+                ipo_date = datetime.strptime(s[:10], '%Y-%m-%d').date()
+        if ipo_date > end_cap:
+            return None
+        low = d.get('priceRangeLow') or d.get('priceMin') or d.get('share_price_lowest') or d.get('proposedSharePrice')
+        high = d.get('priceRangeHigh') or d.get('priceMax') or d.get('share_price_highest') or d.get('proposedSharePrice')
+        shares_raw = d.get('numberOfShares') or d.get('sharesOffered') or d.get('share_count')
+        if shares_raw is not None and not (isinstance(shares_raw, float) and pd.isna(shares_raw)):
+            try:
+                shares_offered = int(str(shares_raw).replace(',', ''))
+            except (ValueError, TypeError):
+                shares_offered = None
+        else:
+            shares_offered = None
+        status = (d.get('status') or 'expected').lower()
+        if status not in ('expected', 'priced', 'withdrawn'):
+            status = 'expected'
+        return IPOEntry(
+            ticker=symbol,
+            name=name,
+            exchange=exchange,
+            ipo_date=ipo_date,
+            price_range_low=float(low) if low is not None and not (isinstance(low, float) and pd.isna(low)) else None,
+            price_range_high=float(high) if high is not None and not (isinstance(high, float) and pd.isna(high)) else None,
+            shares_offered=shares_offered,
+            total_shares=None,
+            status=status,
+        )
+    except Exception as e:
+        print(f"Error parsing NASDAQ IPO item: {e}")
+        return None
+
+
+def _merge_ipo_entries(finnhub_list: List[IPOEntry], nasdaq_list: List[IPOEntry]) -> List[IPOEntry]:
+    """
+    Merge two IPO lists and deduplicate by (normalized ticker or name, ipo_date).
+    When duplicates exist, prefer the entry with more non-null fields. Return sorted by ipo_date.
+    """
+    def filled_count(e: IPOEntry) -> int:
+        return sum(1 for x in (e.price_range_low, e.price_range_high, e.shares_offered, e.total_shares) if x is not None)
+
+    by_key: Dict[Tuple[str, date], IPOEntry] = {}
+    for e in finnhub_list + nasdaq_list:
+        k = _normalize_ipo_key(e)
+        if k not in by_key or filled_count(e) > filled_count(by_key[k]):
+            by_key[k] = e
+    merged = list(by_key.values())
+    merged.sort(key=lambda x: x.ipo_date)
+    return merged
+
+
+def fetch_ipo_calendar(days_ahead: int = 30) -> List[IPOEntry]:
+    """
+    Fetch upcoming IPO calendar from Finnhub and NASDAQ, then merge.
+    Uses caching per source; existing Finnhub behavior unchanged.
+    """
+    finnhub_list = _get_finnhub_ipo_list(days_ahead)
+    try:
+        nasdaq_list = _fetch_nasdaq_ipo_list(days_ahead)
+    except Exception as e:
+        print(f"NASDAQ IPO fetch failed: {e}")
+        nasdaq_list = []
+    merged = _merge_ipo_entries(finnhub_list, nasdaq_list)
+    print(f"[IPO calendar] {len(merged)} total ({len(finnhub_list)} Finnhub, {len(nasdaq_list)} NASDAQ)")
+    return merged
 
 
 def _parse_ipo_data(data: dict) -> List[IPOEntry]:
