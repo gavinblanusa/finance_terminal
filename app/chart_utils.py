@@ -300,6 +300,15 @@ def build_technical_chart_config(
     ]
 
     if rsi:
+        # Fix RSI y-axis at 0–100 (RSI is bounded). Use autoScale: false and an invisible
+        # anchor series so the scale always shows 0 to 100.
+        rsi_times = [x["time"] for x in rsi]
+        rsi_anchor_data = []
+        if len(rsi_times) >= 2:
+            rsi_anchor_data = [
+                {"time": rsi_times[0], "value": 0},
+                {"time": rsi_times[-1], "value": 100},
+            ]
         rsi_chart_options: dict[str, Any] = {
             "height": 200,
             "layout": {
@@ -336,9 +345,47 @@ def build_technical_chart_config(
             "data": rsi,
             "options": {"color": rsi_color, "lineWidth": 2},
         }
+        rsi_series_list: List[dict] = [rsi_series]
+        # Dotted reference lines: overbought (70) and oversold (30)
+        rsi_overbought = [{"time": t, "value": 70} for t in rsi_times]
+        rsi_oversold = [{"time": t, "value": 30} for t in rsi_times]
+        rsi_series_list.append({
+            "type": "Line",
+            "data": rsi_overbought,
+            "options": {
+                "color": "#ff6b6b",
+                "lineWidth": 1,
+                "lineStyle": 1,
+                "lastValueVisible": False,
+                "priceLineVisible": False,
+            },
+        })
+        rsi_series_list.append({
+            "type": "Line",
+            "data": rsi_oversold,
+            "options": {
+                "color": "#69db7c",
+                "lineWidth": 1,
+                "lineStyle": 1,
+                "lastValueVisible": False,
+                "priceLineVisible": False,
+            },
+        })
+        # Invisible anchor series so the price scale range is forced to 0–100
+        if rsi_anchor_data:
+            rsi_series_list.append({
+                "type": "Line",
+                "data": rsi_anchor_data,
+                "options": {
+                    "color": "rgba(0,0,0,0)",
+                    "lineWidth": 0,
+                    "lastValueVisible": False,
+                    "priceLineVisible": False,
+                },
+            })
         charts_out.append({
             "chart": rsi_chart_options,
-            "series": [rsi_series],
+            "series": rsi_series_list,
         })
 
     return charts_out
