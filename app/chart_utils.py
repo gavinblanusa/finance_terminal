@@ -51,7 +51,7 @@ def df_to_technical_chart_data(df: pd.DataFrame, strong_signals_only: bool = Fal
     Expects df with datetime index and at least: Open, High, Low, Close, Volume.
     Optional: RSI_14, SMA_50, SMA_200, BB_Upper, BB_Lower, Signal (BUY, SELL, GOLDEN CROSS, DEATH CROSS).
 
-    When strong_signals_only is True, only emit BUY when RSI_14 < 30 and SELL when RSI_14 > 70;
+    When strong_signals_only is True, only emit BUY when RSI_14 < 25 and SELL when RSI_14 > 75;
     GOLDEN CROSS and DEATH CROSS are unchanged.
 
     Returns dict with: candles, volume, rsi, sma_50, sma_200, bb_upper, bb_lower, markers.
@@ -127,7 +127,7 @@ def df_to_technical_chart_data(df: pd.DataFrame, strong_signals_only: bool = Fal
             if sig == "BUY":
                 if strong_signals_only and has_rsi:
                     rsi_val = out.iloc[i]["RSI_14"]
-                    if pd.isna(rsi_val) or float(rsi_val) >= 30:
+                    if pd.isna(rsi_val) or float(rsi_val) >= 25:
                         continue
                 result["markers"].append({
                     "time": t,
@@ -140,7 +140,7 @@ def df_to_technical_chart_data(df: pd.DataFrame, strong_signals_only: bool = Fal
             elif sig == "SELL":
                 if strong_signals_only and has_rsi:
                     rsi_val = out.iloc[i]["RSI_14"]
-                    if pd.isna(rsi_val) or float(rsi_val) <= 70:
+                    if pd.isna(rsi_val) or float(rsi_val) <= 75:
                         continue
                 result["markers"].append({
                     "time": t,

@@ -2153,7 +2153,7 @@ def market_analysis_page():
                 strong_signals_only = st.checkbox(
                     "Strong signals only",
                     value=False,
-                    help="When on, only show BUY when RSI < 30 and SELL when RSI > 70 (fewer markers).",
+                    help="When on, only show BUY when RSI < 25 and SELL when RSI > 75 (fewer markers).",
                 )
 
                 if date_range == 'Custom':
@@ -2216,7 +2216,8 @@ def market_analysis_page():
                     pass
                 # TradingView Lightweight Charts: candlestick or line + volume + support lines + markers + RSI (zoom + double-click reset)
                 tech_data = df_to_technical_chart_data(df_display, strong_signals_only=strong_signals_only)
-                markers_to_show = (tech_data["markers"] or None) if show_signals else None
+                # Show markers when user wants any signals: all (show_signals) or strong-only (strong_signals_only)
+                markers_to_show = (tech_data["markers"] or None) if (show_signals or strong_signals_only) else None
                 chart_config = build_technical_chart_config(
                     ticker_input,
                     tech_data["candles"],
@@ -2235,7 +2236,7 @@ def market_analysis_page():
                 with st.expander("Chart guide — lines and signals", expanded=False):
                     st.markdown("""
                     Use **Line chart (close only)** to show closing price as a line instead of candlesticks.
-                    **Show buy/sell signals** toggles markers; **Strong signals only** shows fewer markers (BUY when RSI &lt; 30, SELL when RSI &gt; 70).
+                    **Show buy/sell signals** = all markers. **Strong signals only** = only stricter signals (BUY when RSI &lt; 25, SELL when RSI &gt; 75). You can use either or both.
 
                     **Price panel**
                     | Line / marker | Meaning |
