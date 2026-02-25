@@ -2092,11 +2092,9 @@ def market_analysis_page():
                         if profile is None:
                             st.caption("Profile unavailable.")
                         else:
-                            desc = profile.get("description") or ""
-                            if len(desc) > 400:
-                                desc = desc[:400] + "..."
-                            if desc:
-                                st.markdown(desc)
+                            full_desc = profile.get("description") or ""
+                            if full_desc:
+                                st.markdown(full_desc)
                             c1, c2 = st.columns(2)
                             with c1:
                                 st.caption(f"**Sector:** {profile.get('sector') or 'N/A'}")
@@ -2146,7 +2144,18 @@ def market_analysis_page():
                     index=3,
                     help="Select the time range to display"
                 )
-                
+                chart_type = "line" if st.checkbox("Line chart (close only)", value=False, help="Show closing price as a line instead of candlesticks.") else "candlestick"
+                show_signals = st.checkbox(
+                    "Show buy/sell signals",
+                    value=True,
+                    help="Show BUY/SELL and cross markers on the price chart.",
+                )
+                strong_signals_only = st.checkbox(
+                    "Strong signals only",
+                    value=False,
+                    help="When on, only show BUY when RSI < 30 and SELL when RSI > 70 (fewer markers).",
+                )
+
                 if date_range == 'Custom':
                     from datetime import timedelta as _td
                     _today = date.today()
@@ -2205,8 +2214,9 @@ def market_analysis_page():
                     insider_list = _cached_fetch_insider_transactions(ticker_input)
                 except Exception:
                     pass
-                # TradingView Lightweight Charts: candlestick + volume + support lines + markers + RSI (zoom + double-click reset)
-                tech_data = df_to_technical_chart_data(df_display)
+                # TradingView Lightweight Charts: candlestick or line + volume + support lines + markers + RSI (zoom + double-click reset)
+                tech_data = df_to_technical_chart_data(df_display, strong_signals_only=strong_signals_only)
+                markers_to_show = (tech_data["markers"] or None) if show_signals else None
                 chart_config = build_technical_chart_config(
                     ticker_input,
                     tech_data["candles"],
@@ -2217,12 +2227,16 @@ def market_analysis_page():
                     sma_200=tech_data["sma_200"] or None,
                     bb_upper=tech_data["bb_upper"] or None,
                     bb_lower=tech_data["bb_lower"] or None,
-                    markers=tech_data["markers"] or None,
+                    markers=markers_to_show,
+                    price_series_type=chart_type,
                 )
                 renderLightweightCharts(chart_config, key=f"technical_chart_{ticker_input}")
 
                 with st.expander("Chart guide — lines and signals", expanded=False):
                     st.markdown("""
+                    Use **Line chart (close only)** to show closing price as a line instead of candlesticks.
+                    **Show buy/sell signals** toggles markers; **Strong signals only** shows fewer markers (BUY when RSI &lt; 30, SELL when RSI &gt; 70).
+
                     **Price panel**
                     | Line / marker | Meaning |
                     |----------------|---------|

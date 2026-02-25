@@ -2,7 +2,7 @@
 Helpers for streamlit-lightweight-charts: OHLCV DataFrame to component format.
 """
 
-from typing import List, Tuple, Any, Optional
+from typing import List, Literal, Tuple, Any, Optional
 
 import pandas as pd
 
@@ -44,12 +44,15 @@ def ohlcv_to_lightweight_charts_data(
     return candles, volume
 
 
-def df_to_technical_chart_data(df: pd.DataFrame) -> dict:
+def df_to_technical_chart_data(df: pd.DataFrame, strong_signals_only: bool = False) -> dict:
     """
     Convert full technical DataFrame to all series needed for price + RSI charts.
 
     Expects df with datetime index and at least: Open, High, Low, Close, Volume.
     Optional: RSI_14, SMA_50, SMA_200, BB_Upper, BB_Lower, Signal (BUY, SELL, GOLDEN CROSS, DEATH CROSS).
+
+    When strong_signals_only is True, only emit BUY when RSI_14 < 30 and SELL when RSI_14 > 70;
+    GOLDEN CROSS and DEATH CROSS are unchanged.
 
     Returns dict with: candles, volume, rsi, sma_50, sma_200, bb_upper, bb_lower, markers.
     Missing optional columns yield empty lists.
@@ -115,12 +118,17 @@ def df_to_technical_chart_data(df: pd.DataFrame) -> dict:
     if "Signal" in out.columns:
         gain_color = "#00ff41"
         loss_color = "#ff073a"
+        has_rsi = "RSI_14" in out.columns
         for i, t in enumerate(times):
             sig = out.iloc[i].get("Signal")
             if not isinstance(sig, str) or not sig.strip():
                 continue
             sig = sig.strip().upper()
             if sig == "BUY":
+                if strong_signals_only and has_rsi:
+                    rsi_val = out.iloc[i]["RSI_14"]
+                    if pd.isna(rsi_val) or float(rsi_val) >= 30:
+                        continue
                 result["markers"].append({
                     "time": t,
                     "position": "belowBar",
@@ -130,6 +138,10 @@ def df_to_technical_chart_data(df: pd.DataFrame) -> dict:
                     "size": 2,
                 })
             elif sig == "SELL":
+                if strong_signals_only and has_rsi:
+                    rsi_val = out.iloc[i]["RSI_14"]
+                    if pd.isna(rsi_val) or float(rsi_val) <= 70:
+                        continue
                 result["markers"].append({
                     "time": t,
                     "position": "aboveBar",
@@ -171,9 +183,10 @@ def build_technical_chart_config(
     bb_upper: Optional[List[dict]] = None,
     bb_lower: Optional[List[dict]] = None,
     markers: Optional[List[dict]] = None,
+    price_series_type: Literal["candlestick", "line"] = "candlestick",
 ) -> List[dict]:
     """
-    Build chart config for renderLightweightCharts: price chart (candlestick + volume + support lines + markers)
+    Build chart config for renderLightweightCharts: price chart (candlestick or line + volume + support lines + markers)
     and optionally a second chart for RSI below. Zoom and double-click reset are enabled.
 
     Returns a list of one or two chart dicts.
@@ -240,22 +253,32 @@ def build_technical_chart_config(
         },
     }
 
-    candlestick_opts: dict[str, Any] = {
-        "upColor": gain_color,
-        "downColor": loss_color,
-        "borderVisible": False,
-        "wickUpColor": gain_color,
-        "wickDownColor": loss_color,
-    }
-    candlestick_series = {
-        "type": "Candlestick",
-        "data": candles,
-        "options": candlestick_opts,
-    }
-    if markers:
-        candlestick_series["markers"] = markers
-
-    series: List[dict] = [candlestick_series]
+    if price_series_type == "line":
+        line_data = [{"time": c["time"], "value": c["close"]} for c in candles]
+        line_series = {
+            "type": "Line",
+            "data": line_data,
+            "options": {"color": gain_color, "lineWidth": 2},
+        }
+        if markers:
+            line_series["markers"] = markers
+        series: List[dict] = [line_series]
+    else:
+        candlestick_opts: dict[str, Any] = {
+            "upColor": gain_color,
+            "downColor": loss_color,
+            "borderVisible": False,
+            "wickUpColor": gain_color,
+            "wickDownColor": loss_color,
+        }
+        candlestick_series = {
+            "type": "Candlestick",
+            "data": candles,
+            "options": candlestick_opts,
+        }
+        if markers:
+            candlestick_series["markers"] = markers
+        series: List[dict] = [candlestick_series]
 
     if sma_50:
         series.append({
