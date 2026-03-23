@@ -325,12 +325,12 @@ def build_technical_chart_config(
     if rsi:
         # Fix RSI y-axis at 0–100 (RSI is bounded). Use autoScale: false and an invisible
         # anchor series so the scale always shows 0 to 100.
-        rsi_times = [x["time"] for x in rsi]
+        all_times = [c["time"] for c in candles]
         rsi_anchor_data = []
-        if len(rsi_times) >= 2:
+        if len(all_times) >= 2:
             rsi_anchor_data = [
-                {"time": rsi_times[0], "value": 0},
-                {"time": rsi_times[-1], "value": 100},
+                {"time": all_times[0], "value": 0},
+                {"time": all_times[-1], "value": 100},
             ]
         rsi_chart_options: dict[str, Any] = {
             "height": 200,
@@ -370,8 +370,8 @@ def build_technical_chart_config(
         }
         rsi_series_list: List[dict] = [rsi_series]
         # Dotted reference lines: overbought (70) and oversold (30)
-        rsi_overbought = [{"time": t, "value": 70} for t in rsi_times]
-        rsi_oversold = [{"time": t, "value": 30} for t in rsi_times]
+        rsi_overbought = [{"time": t, "value": 70} for t in all_times]
+        rsi_oversold = [{"time": t, "value": 30} for t in all_times]
         rsi_series_list.append({
             "type": "Line",
             "data": rsi_overbought,

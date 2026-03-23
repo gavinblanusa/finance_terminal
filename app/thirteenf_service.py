@@ -11,7 +11,7 @@ import time
 import calendar
 from datetime import datetime, timedelta, date as date_type
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import xml.etree.ElementTree as ET
 
 import requests
@@ -627,3 +627,198 @@ def get_overlap_holdings(cik_list: List[str], year: int, quarter: int) -> List[D
                 "issuer_name": issuer_by_cusip.get(cusip, ""),
             })
     return overlap
+
+
+def _normalize_issuer_name(issuer: str) -> str:
+    """
+    Normalize an issuer name for heuristic ticker matching.
+
+    Keeps behavior aligned with the inline logic previously used in
+    calculate_portfolio_shifts so that existing mappings continue to work.
+    """
+    import re
+
+    return re.sub(r"[^A-Z0-9\s&]", "", (issuer or "").upper())
+
+
+def _resolve_ticker_for_holding(issuer: str, existing_sym: str) -> str:
+    """
+    Resolve a best-effort ticker symbol for a 13F holding.
+
+    This preserves the previous behavior:
+    - If a sym is already present and not the placeholder, use it.
+    - Otherwise, try a curated mapping of common large-cap issuers.
+    - As a last resort, fall back to the first word of the normalized issuer
+      name, or 'UNKNOWN' when nothing reasonable is available.
+    """
+    # Reuse any explicitly provided symbol unless it is the placeholder
+    ticker = (existing_sym or "").strip()
+    if ticker and ticker != "—":
+        return ticker
+
+    clean_issuer = _normalize_issuer_name(issuer)
+
+    # Known mappings for frequently-seen issuers in 13F filings.
+    KNOWN_TICKERS = {
+        "APPLE INC": "AAPL",
+        "MICROSOFT CORP": "MSFT",
+        "AMAZON COM INC": "AMZN",
+        "ALPHABET INC": "GOOGL",
+        "META PLATFORMS INC": "META",
+        "NVIDIA CORP": "NVDA",
+        "TESLA INC": "TSLA",
+        "BERKSHIRE HATHAWAY INC DEL": "BRK-B",
+        "JPMORGAN CHASE & CO": "JPM",
+        "JOHNSON & JOHNSON": "JNJ",
+        "UNITEDHEALTH GROUP INC": "UNH",
+        "EXXON MOBIL CORP": "XOM",
+        "VISA INC": "V",
+        "MASTERCARD INC": "MA",
+        "HOME DEPOT INC": "HD",
+        "PROCTER & GAMBLE CO": "PG",
+        "BROADCOM INC": "AVGO",
+        "CHEVRON CORP NEW": "CVX",
+        "MERCK & CO INC": "MRK",
+        "ELI LILLY & CO": "LLY",
+        "PEPSICO INC": "PEP",
+        "COCA COLA CO": "KO",
+        "ABBVIE INC": "ABBV",
+        "BANK AMERICA CORP": "BAC",
+        "WALMART INC": "WMT",
+        "COSTCO WHSL CORP NEW": "COST",
+        "MCDONALDS CORP": "MCD",
+        "SALESFORCE INC": "CRM",
+        "CISCO SYS INC": "CSCO",
+        "THERMO FISHER SCIENTIFIC INC": "TMO",
+        "ACCENTURE PLC IRELAND": "ACN",
+        "LINDE PLC": "LIN",
+        "ABBOTT LABS": "ABT",
+        "DANAHER CORP": "DHR",
+        "TEXAS INSTRS INC": "TXN",
+        "COMCAST CORP NEW": "CMCSA",
+        "ADOBE INC": "ADBE",
+        "WALT DISNEY CO": "DIS",
+        "ADVAN MICRO DEVICE": "AMD",
+        "VERIZON COMMUNICATIONS INC": "VZ",
+        "PFIZER INC": "PFE",
+        "NIKE INC": "NKE",
+        "AT&T INC": "T",
+        "NETFLIX INC": "NFLX",
+        "QUALCOMM INC": "QCOM",
+        "INTEL CORP": "INTC",
+        "CHUBB LIMITED": "CB",
+        "KRAFT HEINZ CO": "KHC",
+        "OCCIDENTAL PETE CORP": "OXY",
+        "BANK NEW YORK MELLON CORP": "BK",
+        "MOODYS CORP": "MCO",
+        "AMERICAN EXPRESS CO": "AXP",
+        "CITIGROUP INC": "C",
+        "WELLS FARGO & CO NEW": "WFC",
+        "GOLDMAN SACHS GROUP INC": "GS",
+        "MORGAN STANLEY": "MS",
+        "U S BANCORP DEL": "USB",
+        "PNC FINL SVCS GROUP INC": "PNC",
+        "TRUIST FINL CORP": "TFC",
+        "SCHWAB CHARLES CORP": "SCHW",
+        "CAPITAL ONE FINL CORP": "COF",
+        "MITSUBISHI UFJ FINL GROUP IN": "MUFG",
+        "SIRIUS XM HLDGS INC": "SIRI",
+        "DAVITA INC": "DVA",
+        "KROGER CO": "KR",
+        "VERISIGN INC": "VRSN",
+        "PARAMOUNT GLOBAL": "PARA",
+        "AON PLC": "AON",
+        "CHARTER COMMUNICATIONS INC N": "CHTR",
+    }
+
+    mapped = KNOWN_TICKERS.get(clean_issuer)
+    if mapped:
+        return mapped
+
+    # Last resort: first word of issuer name, or UNKNOWN when nothing remains.
+    parts = clean_issuer.split()
+    if parts:
+        return parts[0]
+    return "UNKNOWN"
+
+
+def _fetch_equity_metadata(ticker: str) -> Tuple[str, str, float]:
+    """
+    Fetch sector, industry, and beta metadata for a ticker.
+
+    Mirrors the previous inline yfinance-based behavior:
+    - Defaults are ('Unknown', 'Unknown', 1.0)
+    - Silently ignores any yfinance errors.
+    """
+    sector = "Unknown"
+    industry = "Unknown"
+    beta = 1.0
+
+    if not ticker or ticker == "UNKNOWN":
+        return sector, industry, beta
+
+    try:
+        import yfinance as yf
+
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        sector = info.get("sector") or sector
+        industry = info.get("industry") or industry
+        beta_info = info.get("beta")
+        if beta_info is not None:
+            beta = float(beta_info)
+    except Exception:
+        # Preserve previous behavior: swallow all exceptions from yfinance
+        pass
+
+    return sector, industry, beta
+
+def calculate_portfolio_shifts(holdings: List[Dict]) -> Dict[str, Any]:
+    """
+    Enrich a list of 13F holdings with Sector, Industry, and Beta to map macro risk.
+    Calculates the portfolio-level weighted Beta and sector allocations.
+    """
+    import math
+
+    enriched = []
+    total_val = sum((h.get("value_thousands", 0) for h in holdings))
+    if total_val == 0:
+        return {"sector_weights": {}, "portfolio_beta": 1.0, "holdings_enriched": []}
+
+    sector_totals = {}
+    weighted_beta_sum = 0.0
+    valid_beta_weight = 0.0
+
+    for h in holdings:
+        cusip = h.get("cusip", "")
+        issuer = h.get("issuer_name", "")
+        val = h.get("value_thousands", 0)
+        pct = val / total_val if total_val else 0
+        ticker = _resolve_ticker_for_holding(issuer, h.get("sym", ""))
+        sector, industry, beta = _fetch_equity_metadata(ticker)
+
+        enriched.append({
+            "issuer_name": issuer,
+            "cusip": cusip,
+            "ticker": ticker,
+            "val_thousands": val,
+            "pct": round(pct * 100, 2),
+            "sector": sector,
+            "industry": industry,
+            "beta": round(beta, 2),
+        })
+
+        sector_totals[sector] = sector_totals.get(sector, 0) + val
+        
+        if beta != 1.0 or sector != "Unknown": # Only count real betas
+            weighted_beta_sum += beta * val
+            valid_beta_weight += val
+
+    sector_weights = {s: round((v / total_val) * 100, 2) for s, v in sector_totals.items()}
+    portfolio_beta = round(weighted_beta_sum / valid_beta_weight, 2) if valid_beta_weight > 0 else 1.0
+
+    return {
+        "sector_weights": sector_weights,
+        "portfolio_beta": portfolio_beta,
+        "holdings_enriched": enriched
+    }

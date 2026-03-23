@@ -345,3 +345,43 @@ def fetch_historical_price_openbb(ticker: str, target_date: date) -> Optional[fl
     except Exception as e:
         print(f"[OpenBB] fetch_historical_price_openbb error for {ticker}: {e}")
         return None
+
+
+def fetch_macro_data_openbb(metric: str) -> Optional["Any"]:
+    """
+    Fetch macroeconomic data. We use pandas_datareader for FRED data directly
+    since OpenBB requires an API key for FRED that might not be present.
+    metric: one of 'gdp', 'cpi', 'unemployment', 'treasury_10y', 'm2', 'pmi', 'retail_sales', 'consumer_sentiment'
+    Returns a DataFrame with a datetime index and a 'value' column, or None.
+    """
+    try:
+        import pandas_datareader.data as web
+        import pandas as pd
+        series_map = {
+            'gdp': 'GDP',
+            'cpi': 'CPIAUCSL',
+            'unemployment': 'UNRATE',
+            'treasury_10y': 'DGS10',
+            'm2': 'WM2NS',
+            'pmi': 'M0204AM356PCEN', # ISM PMI equivalent or similar
+            'retail_sales': 'RSAFS',
+            'consumer_sentiment': 'UMCSENT'
+        }
+        if metric in series_map:
+            try:
+                # Start from 2000 to get a good macro picture
+                df = web.DataReader(series_map[metric], 'fred', '2000-01-01')
+                df = df.rename(columns={series_map[metric]: 'value'})
+                df.index.name = 'date'
+                # For daily series like DGS10, forward fill missing values (like weekends)
+                if metric == 'treasury_10y':
+                    df = df.ffill()
+                return df.dropna()
+            except Exception as e:
+                print(f"pandas_datareader failed for {metric}: {e}")
+                return None
+        return None
+
+    except Exception as e:
+        print(f"fetch_macro_data error for {metric}: {e}")
+        return None

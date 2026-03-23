@@ -26,8 +26,9 @@ wheels/
 .installed.cfg
 *.egg
 
-# Streamlit
-.streamlit/
+# Streamlit (keep config.toml for theme)
+.streamlit/*
+!.streamlit/config.toml
 
 # EDGAR cache
 .edgar_cache/
@@ -53,4 +54,11 @@ Thumbs.db
 # Additional Caches
 .ipo_cache/
 .market_cache/
+.macro_cache/
 .ruff_cache/
+
+# Virtual environment
+.venv/
+
+# Cursor IDE
+.cursor/

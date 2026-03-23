@@ -59,6 +59,7 @@ from thirteenf_service import (
     get_holders_by_cusip,
     get_overlap_holdings,
 )
+from macro_data import fetch_macro_indicator
 from pathlib import Path
 from typing import Optional
 
@@ -229,6 +230,10 @@ def _cached_get_holders_by_cusip(cusip: str, institution_ciks: tuple, year: int,
 def _cached_get_overlap_holdings(cik_list: tuple, year: int, quarter: int):
     return get_overlap_holdings(list(cik_list), year, quarter)
 
+@st.cache_data(ttl=86400)
+def _cached_fetch_macro_indicator(metric: str):
+    return fetch_macro_indicator(metric)
+
 
 # Page configuration
 st.set_page_config(
@@ -238,41 +243,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for dark theme
+# Minimal CSS overrides (base theme is in .streamlit/config.toml)
 st.markdown("""
     <style>
-    .main {
-        background-color: #0E1117;
-    }
-    .stSidebar {
-        background-color: #1E1E1E;
-    }
-    .stButton>button {
-        background-color: #1F77B4;
-        color: white;
-        border-radius: 5px;
-    }
     .stButton>button:hover {
         background-color: #1565C0;
-    }
-    h1, h2, h3 {
-        color: #FFFFFF;
-    }
-    .stTextInput>div>div>input {
-        background-color: #262730;
-        color: white;
-    }
-    .stSelectbox>div>div>select {
-        background-color: #262730;
-        color: white;
-    }
-    .stDateInput>div>div>input {
-        background-color: #262730;
-        color: white;
-    }
-    .stNumberInput>div>div>input {
-        background-color: #262730;
-        color: white;
     }
     .urgent-alert {
         background-color: #FF4B4B;
@@ -282,7 +257,7 @@ st.markdown("""
         margin: 10px 0;
     }
     .metric-card {
-        background-color: #262730;
+        background-color: var(--secondary-background-color, #262730);
         padding: 20px;
         border-radius: 10px;
         text-align: center;
@@ -326,7 +301,7 @@ def dashboard_page():
     col_refresh, col_spacer = st.columns([1, 5])
     with col_refresh:
         if st.button("🔄 Refresh Prices"):
-            st.cache_data.clear()
+            get_portfolio_data.clear()
             st.rerun()
     
     st.markdown("---")
@@ -423,23 +398,44 @@ def dashboard_page():
             viz_col1, viz_col2 = st.columns(2)
             
             with viz_col1:
-                # Pie chart - Portfolio allocation
-                allocation_data = {p['ticker']: p['current_value'] for p in summary['positions']}
-                
+                MAX_SLICES = 8
+                sorted_positions = sorted(
+                    summary['positions'],
+                    key=lambda p: p['current_value'],
+                    reverse=True,
+                )
+                if len(sorted_positions) > MAX_SLICES:
+                    top = sorted_positions[:MAX_SLICES]
+                    other_value = sum(p['current_value'] for p in sorted_positions[MAX_SLICES:])
+                    chart_names = [p['ticker'] for p in top] + ['Other']
+                    chart_values = [p['current_value'] for p in top] + [other_value]
+                else:
+                    chart_names = [p['ticker'] for p in sorted_positions]
+                    chart_values = [p['current_value'] for p in sorted_positions]
+
                 fig_pie = px.pie(
-                    values=list(allocation_data.values()),
-                    names=list(allocation_data.keys()),
+                    values=chart_values,
+                    names=chart_names,
                     title="Portfolio Allocation by Ticker",
-                    color_discrete_sequence=px.colors.qualitative.Set2
+                    color_discrete_sequence=px.colors.qualitative.Set2,
                 )
                 fig_pie.update_layout(
                     paper_bgcolor='rgba(0,0,0,0)',
                     plot_bgcolor='rgba(0,0,0,0)',
                     font_color='white',
-                    title_font_size=16
+                    title_font_size=16,
                 )
-                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                fig_pie.update_traces(
+                    textposition='inside',
+                    textinfo='percent+label',
+                    hovertemplate='%{label}: %{value:$,.2f} (%{percent})<extra></extra>',
+                )
                 st.plotly_chart(fig_pie, use_container_width=True)
+                if len(sorted_positions) > MAX_SLICES:
+                    st.caption(
+                        f"Showing top {MAX_SLICES} positions; "
+                        f"{len(sorted_positions) - MAX_SLICES} smaller position(s) grouped as 'Other'."
+                    )
             
             with viz_col2:
                 # Bar chart - Gains by tax status
@@ -474,22 +470,46 @@ def dashboard_page():
             st.markdown("---")
             st.subheader("Position Details")
             
-            positions_data = []
+            positions_rows = []
             for p in summary['positions']:
                 avg_cost = p['total_cost_basis'] / p['total_shares'] if p['total_shares'] else 0
-                positions_data.append({
+                positions_rows.append({
                     "Ticker": p['ticker'],
                     "Shares": p['total_shares'],
-                    "Avg Cost": format_currency(avg_cost),
-                    "Current Price": format_currency(p['current_price']),
-                    "Market Value": format_currency(p['current_value']),
-                    "Gain/Loss": format_currency(p['unrealized_gain']),
-                    "Gain %": format_percentage(p['unrealized_gain_pct']),
+                    "Avg Cost": avg_cost,
+                    "Current Price": p['current_price'],
+                    "Market Value": p['current_value'],
+                    "Gain/Loss": p['unrealized_gain'],
+                    "Gain %": p['unrealized_gain_pct'],
                     "ST Shares": p['short_term_shares'],
-                    "LT Shares": p['long_term_shares']
+                    "LT Shares": p['long_term_shares'],
                 })
-            
-            st.dataframe(positions_data, use_container_width=True, hide_index=True)
+
+            df_positions = (
+                pd.DataFrame(positions_rows)
+                .sort_values("Market Value", ascending=False)
+                .reset_index(drop=True)
+            )
+
+            st.dataframe(
+                df_positions.style.format({
+                    "Shares": "{:,.4f}",
+                    "Avg Cost": "${:,.2f}",
+                    "Current Price": "${:,.2f}",
+                    "Market Value": "${:,.2f}",
+                    "Gain/Loss": "${:+,.2f}",
+                    "Gain %": "{:+.2f}%",
+                    "ST Shares": "{:,.4f}",
+                    "LT Shares": "{:,.4f}",
+                }).map(
+                    lambda v: "color: #4ECDC4" if isinstance(v, (int, float)) and v > 0
+                              else "color: #FF6B6B" if isinstance(v, (int, float)) and v < 0
+                              else "",
+                    subset=["Gain/Loss", "Gain %"],
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
             
             # Cache notice
             st.caption("💡 Prices are cached for 15 minutes to avoid rate limits. Click 'Refresh Prices' to update.")
@@ -4093,11 +4113,346 @@ def thirteenf_page():
         else:
             st.caption("Select at least 2 institutions.")
 
+    st.markdown("---")
+    
+    # Section 5: Smart Money Intelligence (Agentic AI)
+    st.markdown("### 🧠 Smart Money Intelligence (Agentic AI)")
+    st.caption("Leverage LLMs to analyze 13F shifts, extract the macro theses behind the trades, and identify consensus vs. divergence across funds.")
+    
+    ai_tab1, ai_tab2 = st.tabs(["🕵️ Fund Profiler", "🌐 Consensus Engine"])
+    
+    with ai_tab1:
+        st.markdown("**Skill A: Generate a Fund Posture Report**")
+        st.write("Select a fund and quarter to generate a narrative on their risk appetite, sector rotation, and top trade thesis (synthesized from recent news).")
+        col_f1, col_f2 = st.columns([3, 1])
+        with col_f1:
+            agent_inst = st.selectbox("Fund to Profile", selected_names, key="agent_inst")
+            agent_q = st.selectbox("Quarter", quarter_labels, key="agent_q")
+        with col_f2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            run_agent_a = st.button("Generate Profile", use_container_width=True, type="primary")
+            
+        if run_agent_a:
+            agent_cik = name_to_cik[agent_inst]
+            year_a, qtr_a = quarter_by_label[agent_q]
+            with st.spinner(f"Agents are analyzing the 13F and recent news for {agent_inst}... This may take ~15-30s."):
+                from agents.thirteenf_agent import analyze_fund_posture
+                try:
+                    report = analyze_fund_posture(agent_cik, year_a, qtr_a)
+                    if report is None:
+                        st.error("Failed to generate report. (Check API Keys or Data Availability)")
+                    else:
+                        st.success("Synthesis Complete.")
+                        st.markdown(f"**Risk Appetite:** {report.get('risk_appetite', 'N/A')}")
+                        st.markdown(f"**Sector Rotation Logic:** {report.get('sector_rotation_logic', 'N/A')}")
+                        st.info(f"**Top Thesis:** {report.get('top_thesis', 'N/A')}")
+                except Exception as e:
+                    st.error(f"Error accessing Agent: {e}")
+                    
+    with ai_tab2:
+        st.markdown("**Skill B: Executive Consensus & Battlegrounds**")
+        st.write("Aggregates the shifts of all currently selected funds to extract what the Smart Money universally likes, and where they fundamentally disagree.")
+        col_c1, col_c2 = st.columns([3, 1])
+        with col_c1:
+            agent_c_q = st.selectbox("Quarter to Analyze", quarter_labels, key="agent_c_q")
+        with col_c2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            run_agent_b = st.button("Extract Consensus", use_container_width=True, type="primary")
+            
+        if run_agent_b:
+            if len(selected_ciks) < 2:
+                st.warning("Please select at least 2 funds in the main filter above to run consensus.")
+            else:
+                year_c, qtr_c = quarter_by_label[agent_c_q]
+                with st.spinner(f"Agents are analyzing {len(selected_ciks)} funds... This will take some time."):
+                    from agents.thirteenf_agent import analyze_smart_money_consensus
+                    try:
+                        brief = analyze_smart_money_consensus(selected_ciks, year_c, qtr_c)
+                        if brief is None:
+                            st.error("Failed to aggregate data. (Check API Keys)")
+                        else:
+                            st.success("Consensus Extraction Complete.")
+                            st.markdown(f"**Overall Sentiment (Smart Money Barometer):** {brief.get('overall_sentiment', 'N/A')}")
+                            
+                            st.markdown("#### 💡 Consensus Buys")
+                            st.write(brief.get('consensus_buys', 'N/A'))
+                            
+                            st.markdown("#### ⚔️ Battlegrounds")
+                            st.write(brief.get('battlegrounds', 'N/A'))
+                    except Exception as e:
+                        st.error(f"Error accessing Agent: {e}")
+
     with st.expander("About this data"):
         st.caption(
             "Data from SEC EDGAR 13F-HR filings. Holdings are reported by CUSIP; ticker (Sym) is not provided by the SEC. "
             "Compare view shows quarter-over-quarter changes. Overlap shows securities held by all selected institutions in the chosen quarter."
         )
+
+
+def diagnose_macro_health(df, metric_id):
+    """
+    Diagnose the health of a macroeconomic indicator based on the latest data.
+    Returns:
+        status (str): "Healthy", "Teetering", "Unhealthy", or "No Data"
+        emoji (str): "🟢", "🟡", "🔴", or "⚪"
+        value_str (str): Formatted string of the current value (e.g., "+3.4% YoY" or "4.1%")
+    """
+    if df is None or df.empty:
+        return "No Data", "⚪", "N/A"
+        
+    try:
+        latest_val = df['value'].iloc[-1]
+        
+        # Helper to calculate YoY safely
+        def get_yoy():
+            if len(df) < 5:
+                return None
+            one_yr_ago = df.index[-1] - pd.DateOffset(years=1)
+            # Find the closest index to one year ago
+            closest_idx = df.index.get_indexer([one_yr_ago], method='nearest')[0]
+            old_val = df['value'].iloc[closest_idx]
+            if old_val == 0:
+                return None
+            return ((latest_val - old_val) / old_val) * 100
+
+        if metric_id == "gdp":
+            yoy = get_yoy()
+            if yoy is None: return "No Data", "⚪", "N/A"
+            val_str = f"{yoy:+.1f}% YoY"
+            if yoy >= 3.0: return "Healthy", "🟢", val_str
+            elif yoy >= 1.0: return "Teetering", "🟡", val_str
+            else: return "Unhealthy", "🔴", val_str
+
+        elif metric_id == "cpi":
+            yoy = get_yoy()
+            if yoy is None: return "No Data", "⚪", "N/A"
+            val_str = f"{yoy:+.1f}% YoY"
+            if yoy <= 2.5: return "Healthy", "🟢", val_str
+            elif yoy <= 3.5: return "Teetering", "🟡", val_str
+            else: return "Unhealthy", "🔴", val_str
+                
+        elif metric_id == "unemployment":
+            val_str = f"{latest_val:.1f}%"
+            if latest_val <= 4.0: return "Healthy", "🟢", val_str
+            elif latest_val <= 4.5: return "Teetering", "🟡", val_str
+            else: return "Unhealthy", "🔴", val_str
+                
+        elif metric_id == "treasury_10y":
+            val_str = f"{latest_val:.2f}%"
+            if 2.0 <= latest_val <= 4.0: return "Healthy", "🟢", val_str
+            elif (4.1 <= latest_val <= 5.0) or (1.5 <= latest_val < 2.0): return "Teetering", "🟡", val_str
+            else: return "Unhealthy", "🔴", val_str
+                
+        elif metric_id == "m2":
+            yoy = get_yoy()
+            if yoy is None: return "No Data", "⚪", "N/A"
+            val_str = f"{yoy:+.1f}% YoY"
+            if yoy >= 2.0: return "Healthy", "🟢", val_str
+            elif yoy >= 0.0: return "Teetering", "🟡", val_str
+            else: return "Unhealthy", "🔴", val_str
+                
+        elif metric_id == "pmi":
+            val_str = f"{latest_val:.1f}"
+            if latest_val >= 50.0: return "Healthy", "🟢", val_str
+            elif latest_val >= 45.0: return "Teetering", "🟡", val_str
+            else: return "Unhealthy", "🔴", val_str
+                
+        elif metric_id == "retail_sales":
+            yoy = get_yoy()
+            if yoy is None: return "No Data", "⚪", "N/A"
+            val_str = f"{yoy:+.1f}% YoY"
+            if yoy >= 3.0: return "Healthy", "🟢", val_str
+            elif yoy >= 1.0: return "Teetering", "🟡", val_str
+            else: return "Unhealthy", "🔴", val_str
+                
+        elif metric_id == "consumer_sentiment":
+            val_str = f"{latest_val:.1f}"
+            if latest_val >= 70.0: return "Healthy", "🟢", val_str
+            elif latest_val >= 60.0: return "Teetering", "🟡", val_str
+            else: return "Unhealthy", "🔴", val_str
+                
+        return "No Data", "⚪", "N/A"
+    except Exception as e:
+        print(f"Error diagnosing macro health for {metric_id}: {e}")
+        return "No Data", "⚪", "N/A"
+
+def macro_dashboard_page():
+    """Display the Macro Dashboard page."""
+    import plotly.express as px
+    import pandas as pd
+    
+    st.title("🌍 Macro Dashboard")
+    st.markdown("---")
+    
+    col_refresh, col_spacer = st.columns([1, 5])
+    with col_refresh:
+        if st.button("🔄 Refresh Macro Data"):
+            st.cache_data.clear()
+            st.rerun()
+            
+    st.markdown("A tracking dashboard for the most important macroeconomic indicators utilized by macro funds to assess liquidity, economic capacity, and the business cycle.")
+    
+    # Define metrics
+    metrics = [
+        {
+            "id": "gdp",
+            "title": "Nominal GDP (Billions)",
+            "primer": "Gross Domestic Product (GDP) measures the total value of goods produced. It is the broadest measure of economic activity. Two consecutive quarters of decline signal a technical recession.",
+            "color": "#1f77b4"
+        },
+        {
+            "id": "cpi",
+            "title": "Consumer Price Index (CPI)",
+            "primer": "CPI tracks inflation across a basket of goods. The Federal Reserve targets ~2% YoY. High inflation often leads to higher interest rates, which cools the market and shrinks valuations.",
+            "color": "#ff7f0e"
+        },
+        {
+            "id": "unemployment",
+            "title": "Unemployment Rate (%)",
+            "primer": "Rising unemployment signals an economic slowdown. **The Sahm Rule** suggests a recession is near if the 3-month average rises 0.5% above its 12-month low.",
+            "color": "#d62728"
+        },
+        {
+            "id": "treasury_10y",
+            "title": "10-Year Treasury Yield (%)",
+            "primer": "The 10-Year Yield is the benchmark for global borrowing costs. Watch the **Yield Curve**: if short-term yields (e.g., 2-Year) exceed the 10-Year, this 'inversion' is a historically reliable recession indicator.",
+            "color": "#2ca02c"
+        },
+        {
+            "id": "m2",
+            "title": "M2 Money Supply (Billions)",
+            "primer": "M2 measures the total money in circulation and bank accounts. Expanding M2 boosts liquidity and asset prices. A contracting M2 signals a liquidity crunch and potential deleveraging.",
+            "color": "#9467bd"
+        },
+        {
+            "id": "pmi",
+            "title": "Purchasing Managers' Index (PMI)",
+            "primer": "A leading indicator of economic health derived from manufacturing/service sector surveys. A reading **above 50** indicates expansion; **below 50** indicates contraction.",
+            "color": "#8c564b"
+        },
+        {
+            "id": "retail_sales",
+            "title": "Total Retail Sales (Millions)",
+            "primer": "A real-time barometer of consumer spending momentum. Crucial for understanding if consumer demand is keeping up with economic capacity.",
+            "color": "#e377c2"
+        },
+        {
+            "id": "consumer_sentiment",
+            "title": "Consumer Sentiment (U. Michigan)",
+            "primer": "Measures how optimistic consumers feel about their finances and the economy. Since consumer spending is ~70% of US GDP, this sentiment drives future spending.",
+            "color": "#7f7f7f"
+        }
+    ]
+    
+    st.markdown("---")
+    
+    # Pre-fetch data and calculate statuses
+    metrics_data = {}
+    health_counts = {"Healthy": 0, "Teetering": 0, "Unhealthy": 0}
+    
+    for m in metrics:
+        df = _cached_fetch_macro_indicator(m["id"])
+        status, emoji, val_str = diagnose_macro_health(df, m["id"])
+        metrics_data[m["id"]] = {
+            "df": df,
+            "status": status,
+            "emoji": emoji,
+            "val_str": val_str
+        }
+        if status in health_counts:
+            health_counts[status] += 1
+            
+    total_valid = sum(health_counts.values())
+    
+    # Render Thermometer
+    if total_valid > 0:
+        st.subheader("🌡️ Economic Temperature")
+        st.markdown("An aggregate diagnosis of the macroeconomic metrics below to determine the broad health of the business cycle.")
+        
+        # Calculate percentages for the thermometer segments
+        p_healthy = (health_counts['Healthy'] / total_valid) * 100
+        p_teetering = (health_counts['Teetering'] / total_valid) * 100
+        p_unhealthy = (health_counts['Unhealthy'] / total_valid) * 100
+        
+        # Custom HTML Thermometer Bar
+        st.markdown(f"""
+        <div style="width: 100%; display: flex; height: 35px; border-radius: 17px; overflow: hidden; margin-bottom: 15px; background-color: #333;">
+            <div style="width: {p_healthy}%; background-color: #2ca02c; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; font-weight: bold;">
+                {health_counts['Healthy'] if health_counts['Healthy'] > 0 else ''}
+            </div>
+            <div style="width: {p_teetering}%; background-color: #ffc107; display: flex; align-items: center; justify-content: center; color: black; font-size: 16px; font-weight: bold;">
+                {health_counts['Teetering'] if health_counts['Teetering'] > 0 else ''}
+            </div>
+            <div style="width: {p_unhealthy}%; background-color: #d62728; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; font-weight: bold;">
+                {health_counts['Unhealthy'] if health_counts['Unhealthy'] > 0 else ''}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"**🟢 Healthy:** {health_counts['Healthy']}")
+        with col2:
+            st.markdown(f"**🟡 Teetering:** {health_counts['Teetering']}")
+        with col3:
+            st.markdown(f"**🔴 Unhealthy:** {health_counts['Unhealthy']}")
+            
+        st.markdown("---")
+    
+    # Render charts in a 2-column layout
+    for i in range(0, len(metrics), 2):
+        col1, col2 = st.columns(2)
+        
+        # Left column
+        metric1 = metrics[i]
+        md1 = metrics_data[metric1["id"]]
+        with col1:
+            st.subheader(f"{md1['emoji']} {metric1['title']} ({md1['val_str']})")
+            df1 = md1["df"]
+            if df1 is not None and not df1.empty:
+                fig1 = px.line(df1, y="value", title="")
+                fig1.update_traces(line_color=metric1["color"])
+                fig1.update_layout(
+                    xaxis_title="Date",
+                    yaxis_title="Value",
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font_color='white',
+                    margin=dict(l=0, r=0, t=10, b=0)
+                )
+                st.plotly_chart(fig1, use_container_width=True)
+            else:
+                st.info(f"Data not available for {metric1['title']}")
+                
+            with st.expander("How to read this & tipping points"):
+                st.write(metric1["primer"])
+                
+        # Right column
+        if i + 1 < len(metrics):
+            metric2 = metrics[i+1]
+            md2 = metrics_data[metric2["id"]]
+            with col2:
+                st.subheader(f"{md2['emoji']} {metric2['title']} ({md2['val_str']})")
+                df2 = md2["df"]
+                if df2 is not None and not df2.empty:
+                    fig2 = px.line(df2, y="value", title="")
+                    fig2.update_traces(line_color=metric2["color"])
+                    fig2.update_layout(
+                        xaxis_title="Date",
+                        yaxis_title="Value",
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        font_color='white',
+                        margin=dict(l=0, r=0, t=10, b=0)
+                    )
+                    st.plotly_chart(fig2, use_container_width=True)
+                else:
+                    st.info(f"Data not available for {metric2['title']}")
+                    
+                with st.expander("How to read this & tipping points"):
+                    st.write(metric2["primer"])
+        
+        st.markdown("<br>", unsafe_allow_html=True)
 
 
 def main():
@@ -4114,7 +4469,7 @@ def main():
     # Navigation menu
     page = st.sidebar.radio(
         "Navigation",
-        ["Dashboard", "Portfolio & Taxes", "Market Analysis", "IPO Vintage Tracker", "Partnerships", "13F Holdings"],
+        ["Dashboard", "Portfolio & Taxes", "Market Analysis", "Macro Dashboard", "IPO Vintage Tracker", "Partnerships", "13F Holdings"],
         label_visibility="collapsed"
     )
     
@@ -4132,6 +4487,8 @@ def main():
         portfolio_taxes_page()
     elif page == "Market Analysis":
         market_analysis_page()
+    elif page == "Macro Dashboard":
+        macro_dashboard_page()
     elif page == "IPO Vintage Tracker":
         ipo_tracker_page()
     elif page == "Partnerships":

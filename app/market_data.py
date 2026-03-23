@@ -105,9 +105,19 @@ CACHE_EXPIRY_HOURS = 4  # Cache OHLCV data for 4 hours during market hours
 TICKER_INFO_CACHE_HOURS = 2  # Cache ticker info (P/E, earnings, etc.) for 2 hours
 
 
+def _ensure_cache_dir() -> None:
+    """
+    Ensure the market cache directory exists.
+
+    Central helper so both OHLCV and ticker info caches share identical
+    directory-creation behavior.
+    """
+    CACHE_DIR.mkdir(exist_ok=True)
+
+
 def _get_cache_path(ticker: str) -> Path:
     """Get cache file path for a ticker."""
-    CACHE_DIR.mkdir(exist_ok=True)
+    _ensure_cache_dir()
     return CACHE_DIR / f"{ticker.upper()}_ohlcv.json"
 
 
@@ -169,7 +179,7 @@ def _load_from_cache(ticker: str) -> Optional[pd.DataFrame]:
 
 def _get_ticker_info_cache_path(ticker: str) -> Path:
     """Get cache file path for ticker info data."""
-    CACHE_DIR.mkdir(exist_ok=True)
+    _ensure_cache_dir()
     return CACHE_DIR / f"{ticker.upper()}_info.json"
 
 
@@ -3091,6 +3101,52 @@ def fetch_company_profile_fmp(ticker: str) -> Optional[Dict]:
         return None
 
 
+def _fetch_profile_yfinance(ticker: str) -> Optional[Dict]:
+    """
+    Fetch company profile fields from yfinance (fallback for missing website, industry, employees).
+    Returns dict with only the keys that have values; None on error.
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        if not info:
+            return None
+        out = {}
+        if info.get("website"):
+            out["website"] = str(info["website"]).strip()
+        if info.get("industry"):
+            out["industry"] = str(info["industry"]).strip()
+        if info.get("sector"):
+            out["sector"] = str(info["sector"]).strip()
+        if info.get("fullTimeEmployees") is not None:
+            try:
+                out["employees"] = int(info["fullTimeEmployees"])
+            except (TypeError, ValueError):
+                pass
+        if info.get("longBusinessSummary"):
+            out["description"] = str(info["longBusinessSummary"]).strip()
+        # CEO: yfinance often has 'companyOfficers' list with 'name' and 'title'
+        officers = info.get("companyOfficers") or []
+        for o in officers:
+            if isinstance(o, dict) and (o.get("title") or "").upper().find("CEO") >= 0:
+                if o.get("name"):
+                    out["ceo"] = str(o["name"]).strip()
+                    break
+        return out if out else None
+    except Exception as e:
+        print(f"[yfinance Profile] Error for {ticker}: {e}")
+        return None
+
+
+def _merge_profile_missing(profile: Dict, source: Optional[Dict], keys: List[str]) -> None:
+    """In-place: fill missing keys in profile from source if source has them."""
+    if not source:
+        return
+    for k in keys:
+        if (profile.get(k) is None or profile.get(k) == "") and source.get(k) is not None:
+            profile[k] = source[k]
+
+
 def get_company_profile(ticker: str) -> Optional[Dict]:
     """
     Get company profile with read-through cache (DB, then FMP).
@@ -3103,18 +3159,21 @@ def get_company_profile(ticker: str) -> Optional[Dict]:
         row = db.query(CompanyProfile).filter(CompanyProfile.ticker == ticker).first()
         cutoff = datetime.utcnow() - timedelta(days=7)
         if row and row.fetched_at and row.fetched_at.replace(tzinfo=None) >= cutoff:
-            out = {
-                "ticker": row.ticker,
-                "sector": row.sector,
-                "industry": row.industry,
-                "description": row.description,
-                "website": row.website,
-                "employees": row.full_time_employees,
-                "ceo": row.ceo,
-                "data_source": row.data_source,
-            }
-            db.close()
-            return out
+            # If cache is missing key profile fields, re-fetch so merge can fill them
+            missing = sum(1 for x in (row.website, row.industry, row.full_time_employees) if x is None or (isinstance(x, str) and x.strip() == ""))
+            if missing < 3:  # use cache only when at least one of website/industry/employees is present
+                out = {
+                    "ticker": row.ticker,
+                    "sector": row.sector,
+                    "industry": row.industry,
+                    "description": row.description,
+                    "website": row.website,
+                    "employees": row.full_time_employees,
+                    "ceo": row.ceo,
+                    "data_source": row.data_source,
+                }
+                db.close()
+                return out
         db.close()
     except Exception as e:
         print(f"[CompanyProfile] DB read error: {e}")
@@ -3122,15 +3181,38 @@ def get_company_profile(ticker: str) -> Optional[Dict]:
             db.close()
         except Exception:
             pass
+    merge_keys = ["website", "industry", "employees", "sector", "ceo", "description"]
     try:
         from openbb_adapter import fetch_profile_openbb
         profile = fetch_profile_openbb(ticker)
     except ImportError:
         profile = None
+    from_openbb = bool(profile)
     if not profile:
         profile = fetch_company_profile_fmp(ticker)
+    # When both OpenBB and FMP fail, try yfinance as sole source so profile is still shown
+    if not profile:
+        profile = _fetch_profile_yfinance(ticker)
+        if profile:
+            profile["ticker"] = ticker
+            profile["data_source"] = "yfinance"
     if not profile:
         return None
+    # Fill missing fields from the other provider(s), then yfinance
+    if from_openbb:
+        fmp_profile = fetch_company_profile_fmp(ticker)
+        _merge_profile_missing(profile, fmp_profile, merge_keys)
+    else:
+        try:
+            from openbb_adapter import fetch_profile_openbb
+            openbb_profile = fetch_profile_openbb(ticker)
+            _merge_profile_missing(profile, openbb_profile, merge_keys)
+        except ImportError:
+            pass
+        fmp_profile = fetch_company_profile_fmp(ticker)
+        _merge_profile_missing(profile, fmp_profile, merge_keys)
+    yf_profile = _fetch_profile_yfinance(ticker)
+    _merge_profile_missing(profile, yf_profile, merge_keys)
     try:
         db = _get_db_session()
         from models import CompanyProfile

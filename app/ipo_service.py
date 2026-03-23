@@ -35,6 +35,16 @@ CACHE_DIR = _ROOT / ".ipo_cache"
 IPO_CACHE_EXPIRY_HOURS = 6  # Cache IPO calendar for 6 hours
 
 
+def _ensure_cache_dir() -> None:
+    """
+    Ensure the IPO cache directory exists.
+
+    Central helper so all cache helpers share identical directory-creation
+    behavior.
+    """
+    CACHE_DIR.mkdir(exist_ok=True)
+
+
 @dataclass
 class IPOEntry:
     """Represents an upcoming or historical IPO entry."""
@@ -68,7 +78,7 @@ class VintagePerformance:
 
 def _get_cache_path(cache_name: str) -> Path:
     """Get cache file path."""
-    CACHE_DIR.mkdir(exist_ok=True)
+    _ensure_cache_dir()
     return CACHE_DIR / f"{cache_name}.json"
 
 
