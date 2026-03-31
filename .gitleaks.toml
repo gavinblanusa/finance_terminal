@@ -1,0 +1,15 @@
+# Local / CI secret scanning: https://github.com/gitleaks/gitleaks
+# Run: gitleaks detect --source . --verbose
+
+title = "Gavin Financial Terminal"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented env templates only (no real secrets)"
+paths = [
+  '''\.env\.example$''',
+  '''\.env\.sample$''',
+  '''\.env\.template$''',
+]

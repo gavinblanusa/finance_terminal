@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Refuse commits that stage environment files with secrets.
+# Enable once per clone: git config core.hooksPath scripts/git-hooks
+set -euo pipefail
+while IFS= read -r f; do
+  [[ -z "${f}" ]] && continue
+  case "${f}" in
+    .env)
+      echo "Refusing to commit .env — keep it local; use .env.example in git only." >&2
+      exit 1
+      ;;
+    .env.*)
+      case "${f}" in
+        .env.example | .env.sample | .env.template) ;;
+        *)
+          echo "Refusing to commit ${f} — use .env.example for tracked placeholders." >&2
+          exit 1
+          ;;
+      esac
+      ;;
+  esac
+done < <(git diff --cached --name-only)

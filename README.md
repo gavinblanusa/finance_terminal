@@ -14,7 +14,7 @@ pip install -r requirements.txt
 
 1. Ensure PostgreSQL is installed and running
 2. Create a database named `gavin_financial` (or update the name in your `.env` file)
-3. Create a `.env` file in the project root with the following variables (or copy `.env.example` to `.env` and fill in your values). **Do not commit `.env` or paste API keys into the repo; use environment variables only.**
+3. Create a `.env` file in the project root with the following variables (or copy `.env.example` to `.env` and fill in your values). **Do not commit `.env` or paste API keys into the repo; use environment variables only.** Optional: run `git config core.hooksPath scripts/git-hooks` in this repo so Git refuses commits that stage `.env` (or other `.env.*` files except `.env.example` / `.env.sample` / `.env.template`). To scan for leaked secrets locally, install [gitleaks](https://github.com/gitleaks/gitleaks) and run `gitleaks detect --source . --verbose` (config: `.gitleaks.toml`).
 
 ```env
 DB_HOST=localhost
