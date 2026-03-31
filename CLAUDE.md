@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Project pointers: **README.md** (setup, structure, API), **AGENTS.md** (Cursor Cloud / VM notes), **docs/ARCHITECTURE.md** (page-to-module map), **CHANGELOG.md** / **VERSION** (releases).
+Project pointers: **README.md** (setup, structure, API), **AGENTS.md** (Cursor Cloud / VM notes, **gstack `/learn` paths**), **docs/ARCHITECTURE.md** (page-to-module map), **CHANGELOG.md** / **VERSION** (releases).
 
 ## Design system
 
@@ -28,3 +28,4 @@ Key routing (invoke the matching skill or equivalent when the user asks):
 - Design system, brand → design-consultation
 - Visual audit, design polish → design-review
 - Architecture / plan review → plan-eng-review
+- Project learnings, `/learn`, "what did we learn" → learn (see **AGENTS.md** § Gstack project learnings)

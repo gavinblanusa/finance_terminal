@@ -27,3 +27,14 @@ Gavin Financial Terminal is a single-service Python/Streamlit app backed by a PG
 - **Tests**: FastAPI contract tests live in `tests/` (`pytest`); `pytest.ini` sets `pythonpath = app`. Run `pytest tests/test_terminal_api.py` from the repo root (mocks avoid network/DB). Partnership signal unit tests: `pytest tests/test_partnership_signal.py`. Linting: `ruff check app/`.
 - **Module imports use relative-style**: `app/db.py` imports `from models import Base` (not `from app.models`). The app expects to be launched from the project root with `streamlit run app/main.py`, which adds `app/` to `sys.path`. When running ad-hoc scripts, prepend `app/` to `sys.path` (e.g. `sys.path.insert(0, 'app')`).
 - **API keys are optional**: The app works with zero API keys; it falls back to yfinance and SEC EDGAR (both free, no key). More keys improve data coverage but are not required for development.
+
+### Gstack project learnings (`/learn`)
+
+Cross-session notes for this repo live in **`~/.gstack/projects/<slug>/learnings.jsonl`** (append-only JSONL). The **slug comes from `git remote`**, not the local folder name (this repo: `gavinblanusa-finance_terminal` because origin is `gavinblanusa/finance_terminal`).
+
+- **Append** (from repo root, so slug resolves):  
+  `~/.claude/skills/gstack/bin/gstack-learnings-log '{"skill":"learn","type":"architecture","key":"my-key","insight":"One sentence.","confidence":8,"source":"documented"}'`
+- **Search**: same directory, then  
+  `~/.claude/skills/gstack/bin/gstack-learnings-search --query "keyword" --limit 20`
+- **Wrapper** (cd’s to repo root for you): `scripts/gstack-learnings.sh recent`, `scripts/gstack-learnings.sh search "keyword" 20`, `scripts/gstack-learnings.sh log '<json>'`
+- **Requires [bun](https://bun.sh)** on PATH (`gstack-learnings-log` validates JSON with bun). First log creates `~/.gstack/projects/<slug>/` automatically.
