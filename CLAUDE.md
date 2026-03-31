@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Project pointers: **README.md** (setup, structure, API), **AGENTS.md** (Cursor Cloud / VM notes), **docs/ARCHITECTURE.md** (page-to-module map).
+Project pointers: **README.md** (setup, structure, API), **AGENTS.md** (Cursor Cloud / VM notes), **docs/ARCHITECTURE.md** (page-to-module map), **CHANGELOG.md** / **VERSION** (releases).
 
 ## Design system
 

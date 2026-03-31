@@ -88,6 +88,9 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/plotly_chart_rescale.py` | Plotly chart y-axis rescaling helper |
 | `app/chart_utils.py` | Lightweight-charts helpers: OHLCV→chart config, technical chart build |
 | `docs/` | Documentation (architecture, open-source repos, refactor notes) |
+| `DESIGN.md` | Design system: fonts, color tokens, `.gft-*` patterns (read before UI changes) |
+| `VERSION` | Current release version (`MAJOR.MINOR.PATCH.MICRO`) |
+| `CHANGELOG.md` | Release notes by version |
 | `requirements.txt` | Python dependencies (includes `scipy` for Black–Scholes) |
 | `VISION.md` | Project vision and feature roadmap |
 | `docs/README.md` | Index of docs; when to read each |
@@ -146,7 +149,8 @@ The tax engine uses **Highest-In-First-Out (HIFO)** methodology:
 - Manual IPO registry and exchange selection
 
 ### Partnerships
-- **SEC 8-K partnership events**: Item 1.01 filings, extracted counterparties, **signal score**, **excerpt**, **yfinance** filer market cap, configurable **cap band** and **alias** matching (`partnerships_config.py`, `partnership_signal.py`, `partnership_enrichment.py`)
+- **SEC 8-K partnership events**: Item 1.01 filings, extracted counterparties, **signal score** and **why** lines, **excerpt**, **yfinance** filer market cap, configurable **cap band** and **alias** / interest matching (`partnerships_config.py`, `partnership_signal.py`, `partnership_enrichment.py`)
+- **Filters**: default **in-band** filer cap view; switch to **All (dim outside band)** to see every row while muting out-of-band filers; optional **Other** (ambiguous Item 1.01); **Refresh** shows warnings if any watchlist ticker has no CIK
 - Cached EDGAR data to respect rate limits
 
 ### 13F Institutional Holdings
@@ -178,7 +182,7 @@ This section gives future AIs and refactors enough context to navigate the codeb
 | Company profile, fundamentals, news | `market_data.py` (`get_company_profile`, `get_fundamentals_ratios`, `fetch_company_news`), `financetoolkit_adapter.py`, `openbb_adapter.py` | Fundamentals: FinanceToolkit first when enabled, then OpenBB, then FMP; profile/news: OpenBB then FMP/Finnhub; profile/fundamentals use DB cache |
 | Single-ticker price (tax/portfolio) | `tax_engine.py` (`fetch_single_price`, `get_cached_price`), `openbb_adapter.py` | OpenBB quote first, then yfinance + Alpha Vantage + `api_clients`; in-memory cache 15 min |
 | IPO calendar and vintage | `ipo_service.py` (`fetch_ipo_calendar`, `get_vintage_performance`, `get_ipo_price_history`), `openbb_adapter.py` | OpenBB for current/historical price when available; Finnhub for calendar; file cache `.ipo_cache/` |
-| 8-K partnership events | `edgar_service.py` (`get_partnership_events`, `refresh_edgar_data`) | SEC EDGAR; file cache `.edgar_cache/` |
+| 8-K partnership events | `edgar_service.py` (`get_partnership_events`, `refresh_edgar_data` → `(events, warnings)`) | SEC EDGAR; file cache `.edgar_cache/` |
 | 13F institutional holdings | `thirteenf_service.py` (`get_13f_filings_for_institution`, `get_13f_holdings_by_quarter`, `get_13f_compare`, etc.) | SEC EDGAR; file cache `.edgar_cache/13f/` |
 
 ### Environment variables
@@ -217,6 +221,8 @@ Load from `.env` in project root. Used by:
 
 ### More detail
 
+- **`DESIGN.md`** — Design system for Streamlit UI work.
+- **`CHANGELOG.md`** / **`VERSION`** — What shipped in each release.
 - **`docs/README.md`** — Index of all docs and when to use them.
 - **`docs/ARCHITECTURE.md`** — Data flow, page→module map, and refactor notes.
 - **`docs/MARKET_ANALYSIS_DATA_REFACTOR.md`** — Refactor plan for market analysis data (auto-save, DB/cache-first).

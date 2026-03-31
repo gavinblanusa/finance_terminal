@@ -6,9 +6,9 @@ All notable changes to this project are documented here. Version format: `MAJOR.
 
 ### Added
 
-- **Partnerships signal layer:** scoring (`signal_score`, `signal_reasons`), filer market-cap band, display excerpts, counterparty aliases and interest hits, yfinance enrichment batched on refresh and stale-cache re-read (`partnership_signal.py`, `partnership_enrichment.py`, `partnerships_config.py`, `edgar_service.py`).
-- **Partnerships UI:** combined Signal column, cap filters including “All (dim outside band)”, partial refresh warnings, About expander, inspect with full “Why”.
-- **Design system doc** `DESIGN.md` and **CLAUDE.md** routing; tabular mono styling pass across Dashboard, Market/Macro, Portfolio, IPO, 13F, Partnerships.
+- **Partnerships signal layer:** ranked Item 1.01 rows with `signal_score` / `signal_reasons`, filer market-cap band, short excerpts, counterparty aliases and interest hits, batched yfinance enrichment on refresh and when cache rows need a newer signal (`partnership_signal.py`, `partnership_enrichment.py`, `partnerships_config.py`, `edgar_service.py`).
+- **Partnerships UI:** one **Signal** column (score + hits + reasons), cap filters including **All (dim outside band)**, refresh warnings when some tickers skip, **About** expander, **Inspect** for full excerpt and “why”.
+- **Design system** `DESIGN.md` and **CLAUDE.md** skill routing; tabular mono styling pass on Dashboard, Market/Macro, Portfolio, IPO, 13F, Partnerships.
 
 ### Changed
 
@@ -17,4 +17,4 @@ All notable changes to this project are documented here. Version format: `MAJOR.
 
 ### Fixed
 
-- Nav chrome: emoji removed from primary nav titles per design review.
+- Nav chrome: emoji removed from primary sidebar titles (design review).
