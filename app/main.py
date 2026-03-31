@@ -51,6 +51,7 @@ from edgar_service import get_partnership_events, refresh_edgar_data
 from plotly_chart_rescale import render_plotly_chart_with_y_rescale
 from streamlit_lightweight_charts import renderLightweightCharts
 from chart_utils import df_to_technical_chart_data, build_technical_chart_config
+from partnerships_config import FILER_CAP_USD_MAX, FILER_CAP_USD_MIN
 from thirteenf_config import THIRTEENF_INSTITUTIONS
 from thirteenf_service import (
     get_13f_filings_for_institution,
@@ -5009,14 +5010,34 @@ def ipo_tracker_page():
             st.error(f"Error loading registry: {e}")
 
 
+def _gft_fmt_usd_cap(value) -> str:
+    if value is None:
+        return "—"
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if v <= 0:
+        return "—"
+    if v >= 1e12:
+        return f"${v / 1e12:.2f}T"
+    if v >= 1e9:
+        return f"${v / 1e9:.2f}B"
+    if v >= 1e6:
+        return f"${v / 1e6:.2f}M"
+    return f"${v:,.0f}"
+
+
 def partnerships_page():
-    """Display Partnerships (8-K Watch) page: SEC EDGAR Item 1.01 filings and counterparties."""
-    st.title("Partnerships (8-K Watch)")
+    """Display Partnerships (8-K Watch) page: SEC EDGAR Item 1.01 filings, signal scoring, excerpts."""
+    st.title("Partnerships")
+    st.caption(
+        "8-K **Item 1.01** · strategic material agreements. Structured disclosure often **lags** fast "
+        "narrative; use this as a filing-first queue, not a rumor feed."
+    )
     st.markdown(
-        "We watch SEC 8-K **Item 1.01** filings for your watched companies and surface only "
-        "**partnership- and strategic-type** events (e.g. strategic partnerships, collaborations, "
-        "joint ventures, supply/license agreements, M&A). Routine financing (credit agreements, "
-        "indentures, notes offerings) is filtered out so what appears here is more likely to move the stock."
+        "We watch your configured tickers and keep **partnership- and strategic-type** deals "
+        "(collaborations, JVs, licenses, M&A). **Financing** filings (credit, indentures, notes) stay out."
     )
     st.markdown("---")
 
@@ -5026,10 +5047,39 @@ def partnerships_page():
             with st.spinner("Fetching SEC EDGAR data..."):
                 try:
                     refresh_edgar_data(limit=50)
+                    _cached_get_partnership_events.clear()
                     st.success("Data refreshed.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Refresh failed: {e}")
+
+    cap_lo_b = FILER_CAP_USD_MIN / 1e9
+    cap_hi_b = FILER_CAP_USD_MAX / 1e9
+    fcol1, fcol2, fcol3 = st.columns([2, 2, 2])
+    with fcol1:
+        cap_filter = st.selectbox(
+            "Cap filter (filer)",
+            options=[
+                "target_band",
+                "target_band_or_unknown",
+                "all",
+            ],
+            index=0,
+            format_func=lambda x: {
+                "target_band": f"In band (${cap_lo_b:.1f}B–${cap_hi_b:.0f}B)",
+                "target_band_or_unknown": "In band + unknown cap",
+                "all": "All (show band status)",
+            }[x],
+            key="partnerships_cap_filter",
+        )
+    with fcol2:
+        show_other = st.checkbox(
+            'Show "Other" (ambiguous Item 1.01)',
+            value=False,
+            key="partnerships_show_other",
+        )
+    with fcol3:
+        st.caption("Sort: **Interest hit** → **score** → **filing date**.")
 
     try:
         events = _cached_get_partnership_events(50)
@@ -5044,25 +5094,73 @@ def partnerships_page():
         )
         return
 
-    # Build table rows: Filer, Filing date, Type, Counterparty(ies), Interest, Link
+    filtered = list(events)
+    if not show_other:
+        filtered = [e for e in filtered if (e.get("relevance_type") or "") == "partnership"]
+    if cap_filter == "target_band":
+        filtered = [e for e in filtered if e.get("filer_in_cap_band") is True]
+    elif cap_filter == "target_band_or_unknown":
+        filtered = [e for e in filtered if e.get("filer_in_cap_band") is not False]
+
+    filtered.sort(
+        key=lambda e: (
+            bool(e.get("interest_hit")),
+            e.get("signal_score") or 0,
+            e.get("filing_date") or "",
+        ),
+        reverse=True,
+    )
+
+    if not filtered:
+        st.warning(
+            "No rows match your filters. Widen the cap filter, enable **Other**, or click **Refresh**."
+        )
+        return
+
     rows = []
-    for ev in events:
-        filer = f"{ev.get('filer_ticker', '')} ({ev.get('filer_name', '')[:30]}{'...' if len(ev.get('filer_name', '') or '') > 30 else ''})"
+    for ev in filtered:
+        filer = (
+            f"{ev.get('filer_ticker', '')} "
+            f"({ev.get('filer_name', '')[:28]}{'…' if len(ev.get('filer_name', '') or '') > 28 else ''})"
+        )
         filing_date = ev.get("filing_date") or ""
         relevance = ev.get("relevance_type") or "other"
         type_label = "Partnership" if relevance == "partnership" else "Other"
         counterparties = ev.get("counterparties") or []
         cp_display = ", ".join(c.get("name", "") for c in counterparties) if counterparties else "—"
-        has_interest = any(c.get("is_interest") for c in counterparties)
-        interest_badge = "Yes" if has_interest else "—"
+        interest_badge = "Yes" if ev.get("interest_hit") else "—"
         sec_url = ev.get("sec_url") or ""
+        score = int(ev.get("signal_score") or 0)
+        reasons = ev.get("signal_reasons") or []
+        why = "; ".join(reasons[:2]) if reasons else "—"
+        if len(reasons) > 2:
+            why += "…"
+        excerpt = (ev.get("display_excerpt") or ev.get("snippet") or "").strip() or "—"
+        if len(excerpt) > 120:
+            excerpt = excerpt[:119] + "…"
+        cap_cell = _gft_fmt_usd_cap(ev.get("filer_market_cap"))
+        band = ev.get("filer_in_cap_band")
+        if band is True:
+            cap_cell = f"{cap_cell} · in band"
+        elif band is False:
+            cap_cell = f"{cap_cell} · outside"
+        elif cap_filter == "all":
+            cap_cell = f"{cap_cell} · ?"
+
+        sig_line2 = ", ".join(ev.get("interest_labels") or []) or "—"
+        signal_cell = ("HIT · " + sig_line2) if ev.get("interest_hit") else sig_line2
 
         rows.append({
-            "Filer (ticker)": filer,
+            "Score": score,
+            "Hit": interest_badge,
             "Filing date": filing_date,
+            "Filer": filer,
+            "Cap": cap_cell,
             "Type": type_label,
-            "Counterparty(ies)": cp_display,
-            "Interest": interest_badge,
+            "Signal": signal_cell,
+            "Why": why,
+            "Excerpt": excerpt,
+            "Counterparties": cp_display,
             "Link": sec_url,
         })
 
@@ -5072,22 +5170,47 @@ def partnerships_page():
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Filer (ticker)": st.column_config.TextColumn("Filer (ticker)", width="medium"),
+            "Score": st.column_config.NumberColumn("Score", width="small", help="0–100 sort rank"),
+            "Hit": st.column_config.TextColumn("Interest", width="small"),
             "Filing date": st.column_config.TextColumn("Filing date", width="small"),
+            "Filer": st.column_config.TextColumn("Filer", width="medium"),
+            "Cap": st.column_config.TextColumn("Market cap", width="small"),
             "Type": st.column_config.TextColumn("Type", width="small"),
-            "Counterparty(ies)": st.column_config.TextColumn("Counterparty(ies)", width="large"),
-            "Interest": st.column_config.TextColumn("Interest", width="small"),
-            "Link": st.column_config.LinkColumn("SEC filing", display_text="View", width="small"),
-        }
+            "Signal": st.column_config.TextColumn("Signal", width="medium"),
+            "Why": st.column_config.TextColumn("Why", width="large"),
+            "Excerpt": st.column_config.TextColumn("Excerpt", width="large"),
+            "Counterparties": st.column_config.TextColumn("Counterparties", width="large"),
+            "Link": st.column_config.LinkColumn("SEC", display_text="View", width="small"),
+        },
     )
+
+    labels = [f"{e.get('filer_ticker')} · {e.get('filing_date')} · {e.get('accession_number', '')[-8:]}" for e in filtered]
+    choice = st.selectbox(
+        "Inspect filing (full excerpt)",
+        options=list(range(len(filtered))),
+        format_func=lambda i: labels[i],
+        key="partnerships_inspect_idx",
+    )
+    if choice is not None and 0 <= choice < len(filtered):
+        ev = filtered[choice]
+        full_ex = (ev.get("display_excerpt") or ev.get("snippet") or "").strip()
+        if full_ex:
+            st.text_area(
+                "Excerpt (from 8-K body)",
+                value=full_ex,
+                height=160,
+                disabled=True,
+                key=f"partnerships_excerpt_{choice}",
+            )
+        st.caption(ev.get("sec_url") or "")
 
     with st.expander("About this data"):
         st.caption(
-            "Data from SEC EDGAR. We only show 8-K Item 1.01 filings that look like **partnerships or "
-            "strategic deals** (e.g. strategic partnership, collaboration, joint venture, supply/license, "
-            "M&A). Routine financing (credit agreements, indentures, notes) is excluded. "
-            "'Type' = Partnership (keyword match) or Other (ambiguous). "
-            "'Interest' = counterparty matches your configured private-company list."
+            "Data from SEC EDGAR. **Partnership** vs **Other** uses keyword scoring on filing text; "
+            "**Financing** is dropped. **Interest** uses your `partnerships_config` names and aliases. "
+            "**Score** ranks interest hits, partnership language, counterparty extraction, and whether "
+            f"the filer’s market cap (yfinance) sits in **${cap_lo_b:.1f}B–${cap_hi_b:.0f}B**. "
+            "Unknown cap does not auto-exclude when you pick **In band + unknown cap**."
         )
 
 

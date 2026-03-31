@@ -4,7 +4,42 @@ Partnerships (8-K Watch) configuration.
 Edit WATCH_TICKERS and COUNTERPARTY_INTEREST_NAMES here; the app loads this at runtime.
 - WATCH_TICKERS: public company tickers we poll SEC submissions for (8-K filings).
 - COUNTERPARTY_INTEREST_NAMES: private/other names we highlight when they appear as counterparty.
+- COUNTERPARTY_ALIASES: canonical label -> strings to match in extracted counterparty text.
+- FILER_CAP_USD_*: highlight / score filers in this market-cap band (USD).
 """
+
+# Filer market-cap band for scoring and default table filter (USD).
+FILER_CAP_USD_MIN = 500_000_000
+FILER_CAP_USD_MAX = 20_000_000_000
+
+# Canonical name -> substrings for matching (case-insensitive). Keep fragments ≥4 chars when possible.
+COUNTERPARTY_ALIASES = {
+    "OpenAI": ["OpenAI", "Open AI"],
+    "Anthropic": ["Anthropic"],
+    "Anduril Industries": ["Anduril"],
+    "SpaceX": ["SpaceX", "Space X"],
+    "xAI": ["xAI"],
+    "Databricks": ["Databricks"],
+    "Stripe": ["Stripe"],
+    "Cerebras Systems": ["Cerebras"],
+    "Groq": ["Groq"],
+    "Shield AI": ["Shield AI", "Shield A.I."],
+    "ByteDance": ["ByteDance", "TikTok"],
+    "Perplexity": ["Perplexity"],
+    "Lambda Labs": ["Lambda Labs", "Lambda Lab"],
+    "Hugging Face": ["Hugging Face", "HuggingFace"],
+    "Midjourney": ["Midjourney"],
+    "Ramp": ["Ramp"],
+    "Neuralink": ["Neuralink"],
+    "Polymarket": ["Polymarket"],
+    "Kalshi": ["Kalshi"],
+    "Replit": ["Replit"],
+    "Cursor": ["Cursor"],
+    "Discord": ["Discord"],
+    "Epic Games": ["Epic Games", "Epic Game"],
+    "Canva": ["Canva"],
+    "Revolut": ["Revolut"],
+}
 
 # Public companies we watch for 8-K filings (tickers only; de-duplicated and normalized).
 WATCH_TICKERS = [

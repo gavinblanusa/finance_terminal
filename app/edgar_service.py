@@ -9,12 +9,14 @@ Highlights counterparties that match the configured interest list (e.g. private 
 import json
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import requests
 
 from partnerships_config import WATCH_TICKERS, COUNTERPARTY_INTEREST_NAMES
+
+from partnership_signal import SIGNAL_VERSION
 
 # SEC requires a descriptive User-Agent with contact info
 USER_AGENT = "GavinFinancialTerminal/1.0 (gavinblanusa@comcast.net)"
@@ -29,6 +31,7 @@ CACHE_DIR = _ROOT / ".edgar_cache"
 SUBMISSIONS_CACHE_HOURS = 1
 COMPANY_TICKERS_CACHE_HOURS = 24
 EVENTS_CACHE_FILE = "partnership_events.json"
+EVENTS_CACHE_SCHEMA_VERSION = 2
 
 # Noise: exclude these when extracting counterparties (law firms, agents, subsidiaries, etc.)
 COUNTERPARTY_NOISE = frozenset({
@@ -442,7 +445,6 @@ def _extract_counterparties(text: str, relevance_type: str = "partnership") -> L
     Extract counterparty company names from 8-K text. Prefers partnership-like context;
     returns short, clean names and filters boilerplate.
     """
-    lower = text.lower()
     seen = set()
     names = []
 
@@ -595,12 +597,27 @@ def get_partnership_events(limit: int = 50, force_refresh: bool = False) -> List
     counterparties (list of {name, is_interest}), snippet (optional).
     Uses file cache for events; when cache is empty returns [] (user should click Refresh).
     """
+    from partnership_enrichment import enrich_partnership_events
+
     events_path = CACHE_DIR / EVENTS_CACHE_FILE
     if not force_refresh and events_path.exists():
         try:
             with open(events_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             events = data.get("events") or []
+            if events and events[0].get("signal_version") != SIGNAL_VERSION:
+                try:
+                    events = enrich_partnership_events(events)
+                    _save_json(
+                        events_path,
+                        {
+                            "events": events,
+                            "updated": datetime.now().isoformat(),
+                            "cache_schema_version": EVENTS_CACHE_SCHEMA_VERSION,
+                        },
+                    )
+                except Exception as ex:
+                    print(f"[EDGAR] partnership enrich on read failed: {ex}")
             return events[:limit]
         except (json.JSONDecodeError, OSError):
             pass
@@ -615,6 +632,8 @@ def refresh_edgar_data(limit: int = 50) -> List[dict]:
     Force refresh: fetch submissions for all watch tickers, process 8-Ks with Item 1.01,
     extract counterparties, cache results, and return events (newest first, up to limit).
     """
+    from partnership_enrichment import enrich_partnership_events
+
     _ensure_cache_dir()
     ticker_to_cik = get_ticker_to_cik()
     if not ticker_to_cik:
@@ -657,7 +676,18 @@ def refresh_edgar_data(limit: int = 50) -> List[dict]:
     # Sort by filing date descending, then take limit
     all_events.sort(key=lambda e: (e.get("filing_date") or ""), reverse=True)
     events = all_events[:limit]
-    _save_json(CACHE_DIR / EVENTS_CACHE_FILE, {"events": events, "updated": datetime.now().isoformat()})
+    try:
+        events = enrich_partnership_events(events)
+    except Exception as ex:
+        print(f"[EDGAR] partnership enrich after refresh failed: {ex}")
+    _save_json(
+        CACHE_DIR / EVENTS_CACHE_FILE,
+        {
+            "events": events,
+            "updated": datetime.now().isoformat(),
+            "cache_schema_version": EVENTS_CACHE_SCHEMA_VERSION,
+        },
+    )
     return events
 
 

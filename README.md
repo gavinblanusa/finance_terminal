@@ -146,8 +146,7 @@ The tax engine uses **Highest-In-First-Out (HIFO)** methodology:
 - Manual IPO registry and exchange selection
 
 ### Partnerships
-- **SEC 8-K partnership events**: Item 1.01 filings, extracted counterparties
-- Configurable watchlist of tickers and highlighted counterparties (`partnerships_config.py`)
+- **SEC 8-K partnership events**: Item 1.01 filings, extracted counterparties, **signal score**, **excerpt**, **yfinance** filer market cap, configurable **cap band** and **alias** matching (`partnerships_config.py`, `partnership_signal.py`, `partnership_enrichment.py`)
 - Cached EDGAR data to respect rate limits
 
 ### 13F Institutional Holdings
@@ -165,7 +164,7 @@ This section gives future AIs and refactors enough context to navigate the codeb
 
 - **App entry**: From project root, `streamlit run app/main.py` → `app/main.py` → `main()` → sidebar `st.sidebar.radio` chooses page.
 - **Pages** (all in `app/main.py`): `dashboard_page()`, `portfolio_taxes_page()`, `market_analysis_page()`, `ipo_tracker_page()`, `partnerships_page()`, `thirteenf_page()`. Sidebar order: Dashboard, Portfolio & Taxes, Market Analysis, IPO Vintage Tracker, Partnerships, 13F Holdings.
-- **Module usage**: Dashboard/Portfolio use `db`, `models`, `tax_engine`. Market Analysis uses `market_data` (which can use `financetoolkit_adapter`, `openbb_adapter`, and `api_clients` for OHLCV and fundamentals). IPO uses `ipo_service`. Partnerships uses `edgar_service` and `partnerships_config`. 13F uses `thirteenf_service` and `thirteenf_config`. All app code lives under `app/`; caches (`.market_cache/`, `.ipo_cache/`, `.edgar_cache/`) and `.env` stay at project root.
+- **Module usage**: Dashboard/Portfolio use `db`, `models`, `tax_engine`. Market Analysis uses `market_data` (which can use `financetoolkit_adapter`, `openbb_adapter`, and `api_clients` for OHLCV and fundamentals). IPO uses `ipo_service`. Partnerships uses `edgar_service`, `partnerships_config`, `partnership_signal`, and `partnership_enrichment`. 13F uses `thirteenf_service` and `thirteenf_config`. All app code lives under `app/`; caches (`.market_cache/`, `.ipo_cache/`, `.edgar_cache/`) and `.env` stay at project root.
 
 ### Where key logic lives
 
