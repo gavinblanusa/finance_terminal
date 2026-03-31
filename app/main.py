@@ -5064,13 +5064,14 @@ def partnerships_page():
                 "target_band_or_unknown",
                 "all",
             ],
-            index=0,
+            index=2,
             format_func=lambda x: {
                 "target_band": f"In band (${cap_lo_b:.1f}B–${cap_hi_b:.0f}B)",
                 "target_band_or_unknown": "In band + unknown cap",
                 "all": "All (show band status)",
             }[x],
             key="partnerships_cap_filter",
+            help="Watchlist skews megacap; **All** avoids an empty first load. Use **In band** for the mid-cap thesis.",
         )
     with fcol2:
         show_other = st.checkbox(
