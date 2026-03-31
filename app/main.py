@@ -157,7 +157,7 @@ def _cached_tnx_last_percent() -> float:
     return 4.25
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def _cached_relevant_news(port_tuple: Tuple[str, ...], watch_tuple: Tuple[str, ...]):
     return build_relevant_news(
         list(port_tuple),
@@ -243,9 +243,9 @@ def _cached_fetch_macro_indicator(metric: str):
 # Page configuration
 st.set_page_config(
     page_title="Gavin Financial Terminal",
-    page_icon="📈",
+    page_icon=None,
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 # Minimal CSS overrides (base theme is in .streamlit/config.toml)
@@ -664,6 +664,18 @@ def _style_fred_rates_styler(df: pd.DataFrame):
     return styler
 
 
+def _gft_tabular_styler(df: pd.DataFrame):
+    """JetBrains Mono + tabular figures for tape-style tables (see DESIGN.md)."""
+    if df.empty:
+        return df
+    return df.style.set_properties(
+        **{
+            "font-family": "'JetBrains Mono', ui-monospace, monospace",
+            "font-variant-numeric": "tabular-nums",
+        }
+    )
+
+
 def _gft_render_news_hero_cards(ranked: list, limit: int = 3) -> None:
     """Top stories as compact cards (RankedNewsItem list)."""
     if not ranked:
@@ -970,7 +982,11 @@ def dashboard_page():
                                 key=lambda x: -insights.beta_weights_used.get(x[0], 0),
                             )
                         ]
-                        st.dataframe(pd.DataFrame(beta_rows), use_container_width=True, hide_index=True)
+                        st.dataframe(
+                            _gft_tabular_styler(pd.DataFrame(beta_rows)),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
             except Exception as e:
                 _gft_dash_callout(
                     "warning",
@@ -1076,7 +1092,11 @@ def dashboard_page():
                             for fn in fe.factor_names:
                                 row[fn] = round(fe.per_ticker_betas[tk].get(fn, 0.0), 3)
                             rows.append(row)
-                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                        st.dataframe(
+                            _gft_tabular_styler(pd.DataFrame(rows)),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
                 else:
                     _gft_dash_callout(
                         "info",
@@ -1258,7 +1278,8 @@ def dashboard_page():
                     unsafe_allow_html=True,
                 )
             else:
-                ranked = _cached_relevant_news(port_tuple, watch_tuple)
+                with st.spinner("Loading headlines…"):
+                    ranked = _cached_relevant_news(port_tuple, watch_tuple)
                 if not ranked:
                     st.markdown(
                         '<div class="gft-empty-state">No headlines returned. Configure <strong>FINNHUB_API_KEY</strong> '
@@ -1283,7 +1304,7 @@ def dashboard_page():
                         )
                     news_df = pd.DataFrame(news_rows)
                     st.dataframe(
-                        news_df,
+                        _gft_tabular_styler(news_df),
                         use_container_width=True,
                         hide_index=True,
                         column_config={
@@ -2954,9 +2975,9 @@ def get_signal_badge(signal: str) -> str:
     elif signal == 'SELL':
         return '<span style="background-color: #ff073a; color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold;">SELL</span>'
     elif signal == 'GOLDEN CROSS':
-        return '<span style="background-color: #ffd700; color: black; padding: 4px 12px; border-radius: 4px; font-weight: bold;">⭐ GOLDEN</span>'
+        return '<span style="background-color: #ffd700; color: black; padding: 4px 12px; border-radius: 4px; font-weight: bold;">GOLDEN CROSS</span>'
     elif signal == 'DEATH CROSS':
-        return '<span style="background-color: #8b0000; color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold;">☠️ DEATH</span>'
+        return '<span style="background-color: #8b0000; color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold;">DEATH CROSS</span>'
     else:
         return '<span style="background-color: #6c757d; color: white; padding: 4px 12px; border-radius: 4px;">NEUTRAL</span>'
 
@@ -2999,7 +3020,7 @@ def market_analysis_page():
     
     with col_search:
         ticker_input = st.text_input(
-            "🔍 Search Ticker",
+            "Search ticker",
             placeholder="Enter ticker symbol (e.g., AAPL, GOOGL, MSFT)",
             help="Enter a stock ticker to analyze",
             key="market_analysis_ticker",
@@ -3019,7 +3040,7 @@ def market_analysis_page():
             df = fetch_ohlcv(ticker_input, period_years=50)
         
         if df is None or df.empty:
-            st.error(f"❌ Could not fetch data for '{ticker_input}'. Please check the ticker symbol.")
+            st.error(f"Could not fetch data for '{ticker_input}'. Please check the ticker symbol.")
         else:
             # Calculate signals
             df = calculate_signals(df)
@@ -3027,7 +3048,7 @@ def market_analysis_page():
             
             if summary:
                 # === KEY METRICS ROW ===
-                st.markdown("### 📊 Current Status")
+                st.markdown("### Current status")
                 
                 m1, m2, m3, m4, m5 = st.columns(5)
                 
@@ -3040,9 +3061,9 @@ def market_analysis_page():
                     )
                 
                 with m2:
-                    rsi_val = summary['rsi']
-                    rsi_color = "🟢" if rsi_val < 30 else "🔴" if rsi_val > 70 else "⚪"
-                    st.metric("RSI (14)", f"{rsi_color} {rsi_val:.1f}")
+                    rsi_val = summary["rsi"]
+                    rsi_zone = "oversold" if rsi_val < 30 else "overbought" if rsi_val > 70 else "neutral"
+                    st.metric("RSI (14)", f"{rsi_val:.1f}", delta=rsi_zone, delta_color="off")
                 
                 with m3:
                     st.metric("SMA 50", f"${summary['sma_50']:,.2f}" if summary['sma_50'] else "N/A")
@@ -3051,8 +3072,7 @@ def market_analysis_page():
                     st.metric("SMA 200", f"${summary['sma_200']:,.2f}" if summary['sma_200'] else "N/A")
                 
                 with m5:
-                    trend_emoji = "📈" if summary['trend'] == 'BULLISH' else "📉" if summary['trend'] == 'BEARISH' else "➡️"
-                    st.metric("Trend", f"{trend_emoji} {summary['trend']}")
+                    st.metric("Trend", summary["trend"])
                 
                 # === COMPANY PROFILE (expander) ===
                 try:
@@ -3085,11 +3105,11 @@ def market_analysis_page():
                 signal_col, info_col = st.columns([1, 2])
                 
                 with signal_col:
-                    st.markdown("### 🎯 Current Signal")
+                    st.markdown("### Current signal")
                     st.markdown(get_signal_badge(summary['signal']), unsafe_allow_html=True)
                 
                 with info_col:
-                    st.markdown("### 📈 Signal Logic")
+                    st.markdown("### Signal logic")
                     st.markdown("""
                     | Signal | Condition |
                     |--------|-----------|
@@ -3102,7 +3122,7 @@ def market_analysis_page():
                 st.markdown("---")
                 
                 # === DUAL CHART ===
-                st.markdown("### 📉 Technical Chart")
+                st.markdown("### Technical chart")
                 
                 # Trading days per year for tail slicing
                 TRADING_DAYS_PER_YEAR = 252
@@ -3287,7 +3307,7 @@ def market_analysis_page():
 
                 # === RECENT SIGNALS TABLE ===
                 st.markdown("---")
-                st.markdown("### 📋 Recent Signals")
+                st.markdown("### Recent signals")
                 
                 recent_signals = df[df['Signal'] != ''].tail(10).copy()
                 if not recent_signals.empty:
@@ -3298,7 +3318,7 @@ def market_analysis_page():
                     recent_signals = recent_signals.iloc[::-1]  # Most recent first
                     
                     st.dataframe(
-                        recent_signals,
+                        _gft_tabular_styler(recent_signals),
                         use_container_width=True,
                         column_config={
                             "Signal": st.column_config.TextColumn("Signal", width="medium"),
@@ -3306,14 +3326,14 @@ def market_analysis_page():
                             "RSI": st.column_config.NumberColumn("RSI", format="%.1f"),
                             "SMA 50": st.column_config.NumberColumn("SMA 50", format="$%.2f"),
                             "SMA 200": st.column_config.NumberColumn("SMA 200", format="$%.2f"),
-                        }
+                        },
                     )
                 else:
                     st.info("No trading signals generated in the selected period.")
                 
                 # === VALUATION CHART ===
                 st.markdown("---")
-                st.markdown("### 💰 Valuation Analysis")
+                st.markdown("### Valuation analysis")
                 st.caption("P/E Multiple and Revenue Growth trends help assess if a stock is fairly valued relative to its growth.")
                 
                 # Time range selector and optional refetch for valuation chart
@@ -3343,9 +3363,8 @@ def market_analysis_page():
                     with val_col1:
                         pe_val = valuation_data['current_pe']
                         if pe_val:
-                            # Color code P/E
-                            pe_color = "🟢" if pe_val < 20 else "🟡" if pe_val < 35 else "🔴"
-                            st.metric("Current P/E", f"{pe_color} {pe_val:.1f}x")
+                            pe_band = "lower" if pe_val < 20 else "mid" if pe_val < 35 else "elevated"
+                            st.metric("Current P/E", f"{pe_val:.1f}x", delta=pe_band, delta_color="off")
                         else:
                             st.metric("Current P/E", "N/A")
                     
@@ -3364,29 +3383,25 @@ def market_analysis_page():
                             # Color code PEG ratio
                             # < 1 = potentially undervalued, 1-2 = fair, > 2 = expensive
                             if peg < 1:
-                                peg_color = "🟢"
                                 peg_label = "Undervalued"
                             elif peg < 2:
-                                peg_color = "🟡"
                                 peg_label = "Fair"
                             else:
-                                peg_color = "🔴"
                                 peg_label = "Expensive"
                             st.metric(
-                                "PEG Ratio", 
-                                f"{peg_color} {peg:.2f}",
+                                "PEG Ratio",
+                                f"{peg:.2f}",
                                 peg_label,
-                                delta_color="off"
+                                delta_color="off",
                             )
                         elif earnings_growth:
                             # Show earnings growth instead if PEG unavailable (no delta = no arrow)
                             growth_pct = earnings_growth * 100
-                            growth_color = "🟢" if growth_pct > 20 else "🟡" if growth_pct > 0 else "🔴"
                             st.metric(
                                 "Earnings Growth (YoY)",
-                                f"{growth_color} {growth_pct:+.1f}%",
+                                f"{growth_pct:+.1f}%",
                                 delta=None,
-                                delta_color="off"
+                                delta_color="off",
                             )
                         else:
                             st.metric("PEG Ratio", "N/A")
@@ -3447,17 +3462,20 @@ def market_analysis_page():
                     save_col1, save_col2 = st.columns([3, 1])
                     with save_col1:
                         if db_status['has_data']:
-                            status_icon = "✅" if db_status['is_fresh'] else "⚠️"
-                            st.caption(f"{status_icon} **{ticker_input}** saved in database: {db_status['quarters']} quarters (most recent: {db_status['most_recent']})")
+                            status_note = "Fresh" if db_status["is_fresh"] else "Stale"
+                            st.caption(
+                                f"**{status_note}:** **{ticker_input}** saved in database: {db_status['quarters']} quarters "
+                                f"(most recent: {db_status['most_recent']})"
+                            )
                         else:
-                            st.caption(f"💾 **{ticker_input}** not saved in database yet")
+                            st.caption(f"**{ticker_input}** not saved in database yet")
                     
                     with save_col2:
                         # Check if data came from database
                         from_db = valuation_data.get('from_database', False)
                         
                         if from_db:
-                            st.success("📂 From DB")
+                            st.success("Loaded from database")
                         else:
                             if st.button("Save", key=f"save_valuation_{ticker_input}", help="Save this ticker's valuation data to your database"):
                                 # Get the raw data to save
@@ -3487,13 +3505,13 @@ def market_analysis_page():
                                         })
                                 
                                 if save_valuation_to_db(ticker_input, pe_list, revenue_list):
-                                    st.success(f"✅ Saved {ticker_input} to database!")
+                                    st.success(f"Saved {ticker_input} to database")
                                     st.rerun()
                                 else:
-                                    st.error("❌ Failed to save. Check database connection.")
+                                    st.error("Failed to save. Check database connection.")
                     
                     # Valuation interpretation guide
-                    with st.expander("📖 How to Interpret This Chart"):
+                    with st.expander("How to interpret this chart"):
                         st.markdown("""
                         **P/E Multiple (Top Panel):**
                         - Shows how much investors are willing to pay per dollar of earnings
@@ -3511,15 +3529,15 @@ def market_analysis_page():
                         
                         ---
                         
-                        **🎯 PEG Ratio (P/E to Growth):**
+                        **PEG ratio (P/E to growth):**
                         
                         The PEG ratio divides P/E by expected annual earnings growth rate. It answers: *"Am I paying a fair price for this growth?"*
                         
-                        | PEG Range | Interpretation | Color |
-                        |-----------|----------------|-------|
-                        | **< 1.0** | Potentially **undervalued** relative to growth | 🟢 |
-                        | **1.0 - 2.0** | **Fairly valued** | 🟡 |
-                        | **> 2.0** | Potentially **expensive** relative to growth | 🔴 |
+                        | PEG range | Interpretation |
+                        |-----------|----------------|
+                        | **< 1.0** | Potentially **undervalued** relative to growth |
+                        | **1.0 - 2.0** | **Fairly valued** |
+                        | **> 2.0** | Potentially **expensive** relative to growth |
                         
                         *Example:* A stock with P/E of 30x and 30% earnings growth has PEG = 1.0 (fair). The same P/E with only 15% growth has PEG = 2.0 (expensive).
                         
@@ -3529,12 +3547,15 @@ def market_analysis_page():
                         | P/E Trend | Revenue Trend | Interpretation |
                         |-----------|---------------|----------------|
                         | ↑ Rising | ↑ Accelerating | Growth justified premium |
-                        | ↑ Rising | ↓ Decelerating | Potential overvaluation ⚠️ |
-                        | ↓ Falling | ↑ Accelerating | Potential opportunity 🎯 |
+                        | ↑ Rising | ↓ Decelerating | Potential overvaluation (watch) |
+                        | ↓ Falling | ↑ Accelerating | Potential opportunity |
                         | ↓ Falling | ↓ Decelerating | Fundamentals weakening |
                         """)
                 else:
-                    st.info(f"📊 Valuation data not available for {ticker_input}. This may be due to limited financial disclosures or the stock being too new.")
+                    st.info(
+                        f"Valuation data not available for {ticker_input}. "
+                        "This may be due to limited financial disclosures or the stock being too new."
+                    )
                 
                 # === FUNDAMENTALS AND RATIOS (expander) ===
                 try:
@@ -3570,7 +3591,7 @@ def market_analysis_page():
                 
                 # === TRADINGVIEW-STYLE CHART ===
                 st.markdown("---")
-                st.markdown("### 📊 TradingView Analysis")
+                st.markdown("### TradingView-style analysis")
                 st.caption("Multi-panel momentum analysis with supply/demand zones and trading signals.")
                 
                 # Timeframe selector for TradingView chart
@@ -3633,13 +3654,11 @@ def market_analysis_page():
                 
                 with tv_signal_col1:
                     current_momentum = df_tv_with_signals['TV_Momentum'].iloc[-1] if 'TV_Momentum' in df_tv_with_signals.columns else 0
-                    momentum_color = "🟢" if current_momentum > 10 else "🔴" if current_momentum < -10 else "⚪"
-                    st.metric("Momentum", f"{momentum_color} {current_momentum:.1f}")
+                    st.metric("Momentum", f"{current_momentum:.1f}")
                 
                 with tv_signal_col2:
                     current_osc = df_tv_with_signals['TV_Oscillator'].iloc[-1] if 'TV_Oscillator' in df_tv_with_signals.columns else 0
-                    osc_color = "🟢" if current_osc > 10 else "🔴" if current_osc < -10 else "⚪"
-                    st.metric("Oscillator", f"{osc_color} {current_osc:.1f}")
+                    st.metric("Oscillator", f"{current_osc:.1f}")
                 
                 with tv_signal_col3:
                     # Get latest TV signal
@@ -3647,13 +3666,12 @@ def market_analysis_page():
                     if not tv_signals.empty:
                         latest_tv_signal = tv_signals['TV_Signal'].iloc[-1]
                         latest_tv_strength = tv_signals['TV_Signal_Strength'].iloc[-1]
-                        signal_emoji = "💎" if latest_tv_signal == "BUY" else "🔻" if latest_tv_signal == "SELL" else "➖"
-                        st.metric("Latest Signal", f"{signal_emoji} {latest_tv_signal} ({latest_tv_strength})")
+                        st.metric("Latest signal", f"{latest_tv_signal} ({latest_tv_strength})")
                     else:
-                        st.metric("Latest Signal", "➖ None")
+                        st.metric("Latest signal", "None")
                 
                 # TradingView chart interpretation guide
-                with st.expander("📖 TradingView Chart Guide"):
+                with st.expander("TradingView chart guide"):
                     st.markdown("""
                     **Top Panel - Momentum Oscillator (-50 to +50):**
                     - Combines Stochastic RSI and Rate of Change
@@ -3692,22 +3710,28 @@ def market_analysis_page():
                 tv_save_col1, tv_save_col2 = st.columns([3, 1])
                 with tv_save_col1:
                     if tv_cache_status['has_data']:
-                        status_icon = "✅" if tv_cache_status['is_fresh'] else "⚠️"
-                        cache_time = tv_cache_status['timestamp'].strftime('%Y-%m-%d %H:%M') if tv_cache_status['timestamp'] else 'Unknown'
-                        st.caption(f"{status_icon} **{ticker_input}** TradingView signals cached (saved: {cache_time})")
+                        tv_note = "Fresh" if tv_cache_status["is_fresh"] else "Stale"
+                        cache_time = (
+                            tv_cache_status["timestamp"].strftime("%Y-%m-%d %H:%M")
+                            if tv_cache_status["timestamp"]
+                            else "Unknown"
+                        )
+                        st.caption(
+                            f"**{tv_note}:** **{ticker_input}** TradingView signals cached (saved: {cache_time})"
+                        )
                     else:
-                        st.caption(f"💾 **{ticker_input}** TradingView signals not saved yet")
+                        st.caption(f"**{ticker_input}** TradingView signals not saved yet")
                 
                 with tv_save_col2:
                     if tv_cache_status['is_fresh']:
-                        st.success("📂 Cached")
+                        st.success("Cached")
                     else:
                         if st.button("Save TV signals", key=f"save_tv_{ticker_input}_{tv_timeframe}", help="Save TradingView signals to cache"):
                             if save_tv_signals_to_cache(ticker_input, df_tv_with_signals, tv_timeframe):
-                                st.success(f"✅ Saved TradingView signals for {ticker_input}!")
+                                st.success(f"Saved TradingView signals for {ticker_input}")
                                 st.rerun()
                             else:
-                                st.error("❌ Failed to save TradingView signals.")
+                                st.error("Failed to save TradingView signals.")
                 
                 # === OPTIONS · ATM IV TERM (BVOL / OVME-lite) ===
                 st.markdown("---")
@@ -3763,7 +3787,11 @@ def market_analysis_page():
                         )
                         st.plotly_chart(fig_iv, use_container_width=True)
                         with st.expander("IV term table", expanded=False):
-                            st.dataframe(_df_iv, use_container_width=True, hide_index=True)
+                            st.dataframe(
+                                _gft_tabular_styler(_df_iv),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
                     else:
                         st.info("No ATM IV points returned for this symbol (try another ticker or check chain availability).")
                 except Exception as _iv_exc:
@@ -3936,7 +3964,11 @@ def market_analysis_page():
                         df_comp = pd.DataFrame(rows)
                         if sort_by_val != "description":
                             df_comp = df_comp.drop(columns=["Match"], errors="ignore")
-                        st.dataframe(df_comp, use_container_width=True, hide_index=True)
+                        st.dataframe(
+                            _gft_tabular_styler(df_comp),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
                         st.caption("Analyze a peer:")
                         peer_btns = st.columns(min(len(peers_list), 8))
                         for i, p in enumerate(peers_list[:8]):
@@ -4030,10 +4062,10 @@ def market_analysis_page():
     
     # === WATCHLIST SECTION ===
     st.markdown("---")
-    st.markdown("## 👁️ Watchlist Monitor")
+    st.markdown("## Watchlist monitor")
     
     # Watchlist management
-    with st.expander("➕ Manage Watchlist", expanded=False):
+    with st.expander("Manage watchlist", expanded=False):
         add_col, remove_col = st.columns(2)
         
         with add_col:
@@ -4066,7 +4098,7 @@ def market_analysis_page():
                             )
                             db.add(new_watch)
                             db.commit()
-                            st.success(f"✅ Added {new_ticker} to watchlist!")
+                            st.success(f"Added {new_ticker} to watchlist")
                             st.rerun()
                         
                         db.close()
@@ -4092,7 +4124,7 @@ def market_analysis_page():
                             db.query(Watchlist).filter(Watchlist.ticker == ticker_to_remove).delete()
                             db.commit()
                             db.close()
-                            st.success(f"✅ Removed {ticker_to_remove} from watchlist!")
+                            st.success(f"Removed {ticker_to_remove} from watchlist")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error removing from watchlist: {e}")
@@ -4109,7 +4141,7 @@ def market_analysis_page():
             # Header with refresh button
             header_col1, header_col2 = st.columns([4, 1])
             with header_col1:
-                st.markdown("### 📊 Watchlist Summary")
+                st.markdown("### Watchlist summary")
             with header_col2:
                 if st.button("Refresh", help="Clear cached data and fetch fresh info", key="refresh_watchlist"):
                     # Clear ticker info cache for all watchlist items
@@ -4139,7 +4171,7 @@ def market_analysis_page():
                             if days <= 0:
                                 earnings_display = "Today!"
                             elif days <= 7:
-                                earnings_display = f"{days}d ⚠️"
+                                earnings_display = f"{days}d (soon)"
                             elif days <= 14:
                                 earnings_display = f"{days}d"
                             else:
@@ -4218,7 +4250,7 @@ def market_analysis_page():
                 
                 # Style the dataframe
                 st.dataframe(
-                    df_display,
+                    _gft_tabular_styler(df_display),
                     use_container_width=True,
                     hide_index=True,
                     column_config={
@@ -4328,28 +4360,30 @@ def market_analysis_page():
                     # Price alert
                     if alert_price and current_price:
                         if current_price <= alert_price:
-                            st.success(f"🔔 **{ticker}** has reached your alert price! Current: ${current_price:.2f}, Alert: ${alert_price:.2f}")
+                            st.success(
+                                f"**{ticker}** reached your alert price. Current: ${current_price:.2f}, alert: ${alert_price:.2f}"
+                            )
                             has_alerts = True
                     
                     # Signal alerts
                     if signal in ['BUY', 'GOLDEN CROSS']:
-                        st.info(f"📈 **{ticker}** - {signal} signal detected!")
+                        st.info(f"**{ticker}** — {signal} signal detected")
                         has_alerts = True
                     elif signal in ['SELL', 'DEATH CROSS']:
-                        st.warning(f"📉 **{ticker}** - {signal} signal detected!")
+                        st.warning(f"**{ticker}** — {signal} signal detected")
                         has_alerts = True
                     
                     # Earnings imminent alert
                     earnings = item.get('Earnings')
-                    if earnings and ('⚠️' in str(earnings) or earnings == 'Today!'):
-                        st.warning(f"📅 **{ticker}** - Earnings {earnings.replace('⚠️', '').strip()}!")
+                    if earnings and (earnings == "Today!" or "(soon)" in str(earnings)):
+                        st.warning(f"**{ticker}** — upcoming earnings: {earnings}")
                         has_alerts = True
                 
                 if not has_alerts:
                     st.caption("No active alerts at this time.")
                     
         else:
-            st.info("📋 Your watchlist is empty. Add tickers above to monitor them.")
+            st.info("Your watchlist is empty. Add tickers above to monitor them.")
             
     except Exception as e:
         st.error(f"Error loading watchlist: {e}")
@@ -5214,10 +5248,10 @@ def thirteenf_page():
     st.markdown("---")
     
     # Section 5: Smart Money Intelligence (Agentic AI)
-    st.markdown("### 🧠 Smart Money Intelligence (Agentic AI)")
+    st.markdown("### Smart Money Intelligence (agentic AI)")
     st.caption("Leverage LLMs to analyze 13F shifts, extract the macro theses behind the trades, and identify consensus vs. divergence across funds.")
     
-    ai_tab1, ai_tab2 = st.tabs(["🕵️ Fund Profiler", "🌐 Consensus Engine"])
+    ai_tab1, ai_tab2 = st.tabs(["Fund profiler", "Consensus engine"])
     
     with ai_tab1:
         st.markdown("**Skill A: Generate a Fund Posture Report**")
@@ -5272,10 +5306,10 @@ def thirteenf_page():
                             st.success("Consensus Extraction Complete.")
                             st.markdown(f"**Overall Sentiment (Smart Money Barometer):** {brief.get('overall_sentiment', 'N/A')}")
                             
-                            st.markdown("#### 💡 Consensus Buys")
+                            st.markdown("#### Consensus buys")
                             st.write(brief.get('consensus_buys', 'N/A'))
                             
-                            st.markdown("#### ⚔️ Battlegrounds")
+                            st.markdown("#### Battlegrounds")
                             st.write(brief.get('battlegrounds', 'N/A'))
                     except Exception as e:
                         st.error(f"Error accessing Agent: {e}")
@@ -5292,93 +5326,109 @@ def diagnose_macro_health(df, metric_id):
     Diagnose the health of a macroeconomic indicator based on the latest data.
     Returns:
         status (str): "Healthy", "Teetering", "Unhealthy", or "No Data"
-        emoji (str): "🟢", "🟡", "🔴", or "⚪"
         value_str (str): Formatted string of the current value (e.g., "+3.4% YoY" or "4.1%")
     """
     if df is None or df.empty:
-        return "No Data", "⚪", "N/A"
-        
+        return "No Data", "N/A"
+
     try:
-        latest_val = df['value'].iloc[-1]
-        
-        # Helper to calculate YoY safely
+        latest_val = df["value"].iloc[-1]
+
         def get_yoy():
             if len(df) < 5:
                 return None
             one_yr_ago = df.index[-1] - pd.DateOffset(years=1)
-            # Find the closest index to one year ago
-            closest_idx = df.index.get_indexer([one_yr_ago], method='nearest')[0]
-            old_val = df['value'].iloc[closest_idx]
+            closest_idx = df.index.get_indexer([one_yr_ago], method="nearest")[0]
+            old_val = df["value"].iloc[closest_idx]
             if old_val == 0:
                 return None
             return ((latest_val - old_val) / old_val) * 100
 
         if metric_id == "gdp":
             yoy = get_yoy()
-            if yoy is None: return "No Data", "⚪", "N/A"
+            if yoy is None:
+                return "No Data", "N/A"
             val_str = f"{yoy:+.1f}% YoY"
-            if yoy >= 3.0: return "Healthy", "🟢", val_str
-            elif yoy >= 1.0: return "Teetering", "🟡", val_str
-            else: return "Unhealthy", "🔴", val_str
+            if yoy >= 3.0:
+                return "Healthy", val_str
+            if yoy >= 1.0:
+                return "Teetering", val_str
+            return "Unhealthy", val_str
 
-        elif metric_id == "cpi":
+        if metric_id == "cpi":
             yoy = get_yoy()
-            if yoy is None: return "No Data", "⚪", "N/A"
+            if yoy is None:
+                return "No Data", "N/A"
             val_str = f"{yoy:+.1f}% YoY"
-            if yoy <= 2.5: return "Healthy", "🟢", val_str
-            elif yoy <= 3.5: return "Teetering", "🟡", val_str
-            else: return "Unhealthy", "🔴", val_str
-                
-        elif metric_id == "unemployment":
+            if yoy <= 2.5:
+                return "Healthy", val_str
+            if yoy <= 3.5:
+                return "Teetering", val_str
+            return "Unhealthy", val_str
+
+        if metric_id == "unemployment":
             val_str = f"{latest_val:.1f}%"
-            if latest_val <= 4.0: return "Healthy", "🟢", val_str
-            elif latest_val <= 4.5: return "Teetering", "🟡", val_str
-            else: return "Unhealthy", "🔴", val_str
-                
-        elif metric_id == "treasury_10y":
+            if latest_val <= 4.0:
+                return "Healthy", val_str
+            if latest_val <= 4.5:
+                return "Teetering", val_str
+            return "Unhealthy", val_str
+
+        if metric_id == "treasury_10y":
             val_str = f"{latest_val:.2f}%"
-            if 2.0 <= latest_val <= 4.0: return "Healthy", "🟢", val_str
-            elif (4.1 <= latest_val <= 5.0) or (1.5 <= latest_val < 2.0): return "Teetering", "🟡", val_str
-            else: return "Unhealthy", "🔴", val_str
-                
-        elif metric_id == "m2":
+            if 2.0 <= latest_val <= 4.0:
+                return "Healthy", val_str
+            if (4.1 <= latest_val <= 5.0) or (1.5 <= latest_val < 2.0):
+                return "Teetering", val_str
+            return "Unhealthy", val_str
+
+        if metric_id == "m2":
             yoy = get_yoy()
-            if yoy is None: return "No Data", "⚪", "N/A"
+            if yoy is None:
+                return "No Data", "N/A"
             val_str = f"{yoy:+.1f}% YoY"
-            if yoy >= 2.0: return "Healthy", "🟢", val_str
-            elif yoy >= 0.0: return "Teetering", "🟡", val_str
-            else: return "Unhealthy", "🔴", val_str
-                
-        elif metric_id == "pmi":
+            if yoy >= 2.0:
+                return "Healthy", val_str
+            if yoy >= 0.0:
+                return "Teetering", val_str
+            return "Unhealthy", val_str
+
+        if metric_id == "pmi":
             val_str = f"{latest_val:.1f}"
-            if latest_val >= 50.0: return "Healthy", "🟢", val_str
-            elif latest_val >= 45.0: return "Teetering", "🟡", val_str
-            else: return "Unhealthy", "🔴", val_str
-                
-        elif metric_id == "retail_sales":
+            if latest_val >= 50.0:
+                return "Healthy", val_str
+            if latest_val >= 45.0:
+                return "Teetering", val_str
+            return "Unhealthy", val_str
+
+        if metric_id == "retail_sales":
             yoy = get_yoy()
-            if yoy is None: return "No Data", "⚪", "N/A"
+            if yoy is None:
+                return "No Data", "N/A"
             val_str = f"{yoy:+.1f}% YoY"
-            if yoy >= 3.0: return "Healthy", "🟢", val_str
-            elif yoy >= 1.0: return "Teetering", "🟡", val_str
-            else: return "Unhealthy", "🔴", val_str
-                
-        elif metric_id == "consumer_sentiment":
+            if yoy >= 3.0:
+                return "Healthy", val_str
+            if yoy >= 1.0:
+                return "Teetering", val_str
+            return "Unhealthy", val_str
+
+        if metric_id == "consumer_sentiment":
             val_str = f"{latest_val:.1f}"
-            if latest_val >= 70.0: return "Healthy", "🟢", val_str
-            elif latest_val >= 60.0: return "Teetering", "🟡", val_str
-            else: return "Unhealthy", "🔴", val_str
-                
-        return "No Data", "⚪", "N/A"
+            if latest_val >= 70.0:
+                return "Healthy", val_str
+            if latest_val >= 60.0:
+                return "Teetering", val_str
+            return "Unhealthy", val_str
+
+        return "No Data", "N/A"
     except Exception as e:
         print(f"Error diagnosing macro health for {metric_id}: {e}")
-        return "No Data", "⚪", "N/A"
+        return "No Data", "N/A"
 
 def macro_dashboard_page():
     """Display the Macro Dashboard page."""
     import plotly.express as px
-    import pandas as pd
-    
+
     st.title("Macro Dashboard")
     st.markdown("---")
     
@@ -5450,12 +5500,11 @@ def macro_dashboard_page():
     
     for m in metrics:
         df = _cached_fetch_macro_indicator(m["id"])
-        status, emoji, val_str = diagnose_macro_health(df, m["id"])
+        status, val_str = diagnose_macro_health(df, m["id"])
         metrics_data[m["id"]] = {
             "df": df,
             "status": status,
-            "emoji": emoji,
-            "val_str": val_str
+            "val_str": val_str,
         }
         if status in health_counts:
             health_counts[status] += 1
@@ -5464,7 +5513,7 @@ def macro_dashboard_page():
     
     # Render Thermometer
     if total_valid > 0:
-        st.subheader("🌡️ Economic Temperature")
+        st.subheader("Economic temperature")
         st.markdown("An aggregate diagnosis of the macroeconomic metrics below to determine the broad health of the business cycle.")
         
         # Calculate percentages for the thermometer segments
@@ -5489,11 +5538,11 @@ def macro_dashboard_page():
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(f"**🟢 Healthy:** {health_counts['Healthy']}")
+            st.markdown(f"**Healthy:** {health_counts['Healthy']}")
         with col2:
-            st.markdown(f"**🟡 Teetering:** {health_counts['Teetering']}")
+            st.markdown(f"**Teetering:** {health_counts['Teetering']}")
         with col3:
-            st.markdown(f"**🔴 Unhealthy:** {health_counts['Unhealthy']}")
+            st.markdown(f"**Unhealthy:** {health_counts['Unhealthy']}")
             
         st.markdown("---")
     
@@ -5505,7 +5554,7 @@ def macro_dashboard_page():
         metric1 = metrics[i]
         md1 = metrics_data[metric1["id"]]
         with col1:
-            st.subheader(f"{md1['emoji']} {metric1['title']} ({md1['val_str']})")
+            st.subheader(f"{metric1['title']} — {md1['val_str']} · {md1['status']}")
             df1 = md1["df"]
             if df1 is not None and not df1.empty:
                 fig1 = px.line(df1, y="value", title="")
@@ -5530,7 +5579,7 @@ def macro_dashboard_page():
             metric2 = metrics[i+1]
             md2 = metrics_data[metric2["id"]]
             with col2:
-                st.subheader(f"{md2['emoji']} {metric2['title']} ({md2['val_str']})")
+                st.subheader(f"{metric2['title']} — {md2['val_str']} · {md2['status']}")
                 df2 = md2["df"]
                 if df2 is not None and not df2.empty:
                     fig2 = px.line(df2, y="value", title="")
