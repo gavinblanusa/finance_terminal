@@ -40,6 +40,21 @@ From the project root (the `Invest` folder):
 streamlit run app/main.py
 ```
 
+### 5. Optional: Read-only HTTP API (FastAPI)
+
+Same data builders as the dashboard, for scripts and integrations (no Streamlit session TCA):
+
+```bash
+PYTHONPATH=app uvicorn terminal_api:app --host 127.0.0.1 --port 8800
+```
+
+- Docs: [http://127.0.0.1:8800/docs](http://127.0.0.1:8800/docs)
+- Set `GFT_API_KEY` in `.env` to require `Authorization: Bearer <key>` on `/v1/*` routes (`/health` stays open).
+- Optional **`GFT_CORS_ORIGINS`** (`*` or comma-separated origins) for browser clients; **`GFT_RATE_LIMIT`** (default `60/minute`, or `off` to disable).
+- Extra routes: **`GET /v1/options/iv-term`**, **`POST /v1/analytics/tca`**, **`POST /v1/options/black-scholes`** (see data-layer doc).
+
+See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples.
+
 ## Project Structure
 
 | Path | Purpose |
@@ -51,6 +66,15 @@ streamlit run app/main.py
 | `app/tax_engine.py` | HIFO tax lot tracking, gain calculations, CSV import |
 | `app/macro_context.py` | Dashboard macro strip: cross-asset movers (yfinance), optional FRED rates |
 | `app/portfolio_insights.py` | Dashboard PORT-lite: sector weights, concentration, value-weighted beta vs SPY |
+| `app/factor_exposure.py` | Dashboard Fama–French 5-factor loadings (Ken French daily factors + OHLCV regressions) |
+| `app/tca_estimate.py` | Dashboard pre-trade impact estimate (ADV, participation, illustrative square-root heuristic) |
+| `app/data_schemas.py` | Pydantic JSON-ready views of macro, PORT, factor, TCA, options IV term; `build_dashboard_export_payload` for snapshot download |
+| `app/options_iv_term.py` | Market Analysis: ATM implied vol term structure from Yahoo option chains |
+| `app/options_black_scholes.py` | European Black–Scholes call/put (theory prices; scipy) |
+| `app/fi_context.py` | Dashboard: credit/duration proxy strip (^TNX, HYG, LQD, TLT, IEF via Yahoo) |
+| `app/portfolio_snapshot.py` | Portfolio JSON dict for Streamlit + REST (shared with `terminal_api`) |
+| `app/analytics_export.py` | Compose macro + PORT + factors payload for REST |
+| `app/terminal_api.py` | FastAPI: `/v1/macro`, `/v1/fi`, `/v1/portfolio`, `/v1/analytics/dashboard` |
 | `app/relevant_news.py` | Dashboard ranked headlines across portfolio + watchlist |
 | `app/market_data.py` | OHLCV cache, valuation (P/E, revenue), TradingView-style signals, company profile/fundamentals/news |
 | `app/openbb_adapter.py` | OpenBB data layer (OHLCV, quote, profile, fundamentals, news) |
@@ -64,17 +88,22 @@ streamlit run app/main.py
 | `app/plotly_chart_rescale.py` | Plotly chart y-axis rescaling helper |
 | `app/chart_utils.py` | Lightweight-charts helpers: OHLCV→chart config, technical chart build |
 | `docs/` | Documentation (architecture, open-source repos, refactor notes) |
-| `requirements.txt` | Python dependencies |
+| `requirements.txt` | Python dependencies (includes `scipy` for Black–Scholes) |
 | `VISION.md` | Project vision and feature roadmap |
 | `docs/README.md` | Index of docs; when to read each |
 | `docs/ARCHITECTURE.md` | Data flow, page→module map, refactor notes |
+| `docs/DATA_LAYER_REFERENCE.md` | Data contracts: sources, caches, failures, Pydantic export for dashboard builders |
 | `docs/MARKET_ANALYSIS_DATA_REFACTOR.md` | Refactor plan: auto-save, DB/cache-first for market analysis |
 
 ## Features
 
 ### Dashboard
 - **Macro snapshot**: major indices, VIX, FX, gold/crude (Yahoo Finance); optional Treasury / Fed rates via [FRED](https://fred.stlouisfed.org/) when `FRED_API_KEY` is set
+- **FI · proxies**: ^TNX, HYG, LQD, TLT, IEF last / day change (Yahoo)—duration and credit **tone**, not TRACE or live bonds (SRCH/YAS-lite)
 - **Portfolio risk snapshot**: sector allocation (from cached profiles), top-1 / top-5 / HHI concentration, value-weighted beta vs SPY (daily returns, ~6-month overlap)
+- **Factor exposure (PORT depth)**: Fama–French 5-factor portfolio loadings from [Ken French daily factors](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/Data_Library.html) (cached under `.market_cache/ff5_factors_daily.csv`); per-ticker table, optional heatmap for ≤15 names; educational / not a vendor risk model
+- **Pre-trade TCA (illustrative)**: participation vs recent ADV, realized vol, rough impact in bps and dollars—sizing intuition only, not a calibrated Almgren–Chriss or broker TCA product
+- **JSON snapshot download**: when you hold positions, **⬇ JSON snapshot** exports macro + PORT-lite + factor loadings; **includes last TCA run** from the same browser session after you use Execution · TCA (cleared on Refresh Prices)
 - **Headlines for your book**: merged company news for portfolio + watchlist tickers, relevance-ranked (heuristic scoring)
 - Portfolio value and metrics overview
 - Unrealized gains/losses with real-time prices (via yfinance)
@@ -101,6 +130,8 @@ The tax engine uses **Highest-In-First-Out (HIFO)** methodology:
 - Tracks individual tax lots from each purchase
 
 ### Market Analysis
+- **Options · ATM IV term structure** (BVOL/OVME-lite): implied vol at strike nearest spot across listed expiries (Yahoo Finance chains); line chart vs days to expiry and expandable table—not a dealer vol surface
+- **Options · Black–Scholes**: European call/put **theory** prices from spot/strike/DTE/IV; risk-free default from ^TNX (cached); optional preset rows from the IV table above (`scipy`)
 - **Ticker search** with OHLCV cache (file + optional DB), valuation history (PostgreSQL-first)
 - **Price chart**: Primary chart is TradingView-style via `streamlit_lightweight_charts` and `chart_utils` (candlestick + volume); Plotly is used for the TradingView signals chart and rescaling.
 - **Valuation chart**: P/E and revenue over time (yfinance, Alpha Vantage, Finnhub, FMP)

@@ -5,16 +5,16 @@ A personal financial intelligence platform with portfolio tracking,
 tax optimization, market analysis, and IPO vintage tracking.
 """
 
+import json
+import os
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date
 import html
-import decimal
 from decimal import Decimal
 from sqlalchemy.orm import Session
 from db import get_db_session, init_db
@@ -63,6 +63,15 @@ from thirteenf_service import (
 from macro_data import fetch_macro_indicator
 from macro_context import build_macro_context, macro_context_to_dataframes
 from portfolio_insights import build_portfolio_insights
+import yfinance as yf
+
+from data_schemas import build_dashboard_export_payload, tca_to_schema
+from factor_exposure import build_factor_exposure
+from fi_context import build_fi_context_strip, fi_rows_to_records
+from options_black_scholes import black_scholes_european
+from options_iv_term import build_iv_term_structure
+from tca_estimate import estimate_trade_impact
+from portfolio_snapshot import fetch_portfolio_snapshot_dict
 from relevant_news import build_relevant_news
 from pathlib import Path
 from typing import Optional, Tuple
@@ -71,98 +80,14 @@ from typing import Optional, Tuple
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def safe_float(value, default=0.0):
-    """Safely convert a value to float, returning default on error."""
-    try:
-        if value is None:
-            return default
-        # Handle special Decimal cases
-        if isinstance(value, Decimal):
-            if value.is_nan() or value.is_infinite():
-                return default
-        return float(value)
-    except Exception:
-        return default
-
-
 @st.cache_data(ttl=900)  # Cache for 15 minutes
 def get_portfolio_data():
     """
     Fetch portfolio summary with caching to reduce API calls.
-    
+
     Returns cached data for 15 minutes to avoid Yahoo Finance rate limits.
     """
-    try:
-        db = get_db_session()
-        engine = TaxEngine(db)
-        summary = engine.get_portfolio_summary()
-        db.close()
-        
-        # Convert to serializable format for caching (with safe conversion)
-        return {
-            'total_value': safe_float(summary.total_value),
-            'total_cost_basis': safe_float(summary.total_cost_basis),
-            'total_unrealized_gain': safe_float(summary.total_unrealized_gain),
-            'total_unrealized_gain_pct': safe_float(summary.total_unrealized_gain_pct),
-            'short_term_gain': safe_float(summary.short_term_gain),
-            'long_term_gain': safe_float(summary.long_term_gain),
-            'positions': [
-                {
-                    'ticker': p.ticker,
-                    'total_shares': safe_float(p.total_shares),
-                    'total_cost_basis': safe_float(p.total_cost_basis),
-                    'current_price': safe_float(p.current_price),
-                    'current_value': safe_float(p.current_value),
-                    'unrealized_gain': safe_float(p.unrealized_gain),
-                    'unrealized_gain_pct': safe_float(p.unrealized_gain_pct),
-                    'short_term_shares': safe_float(p.short_term_shares),
-                    'short_term_gain': safe_float(p.short_term_gain),
-                    'long_term_shares': safe_float(p.long_term_shares),
-                    'long_term_gain': safe_float(p.long_term_gain),
-                    'tax_lots': [
-                        {
-                            'trade_id': lot.trade_id,
-                            'ticker': lot.ticker,
-                            'purchase_date': lot.purchase_date.isoformat(),
-                            'shares': safe_float(lot.shares),
-                            'cost_basis': safe_float(lot.cost_basis),
-                            'holding_days': lot.holding_days,
-                            'is_long_term': lot.is_long_term,
-                            'tax_status': lot.tax_status,
-                            'days_until_long_term': lot.days_until_long_term,
-                            'is_near_long_term': lot.is_near_long_term,
-                        }
-                        for lot in p.tax_lots
-                    ],
-                    'lots_near_long_term': [
-                        {
-                            'ticker': lot.ticker,
-                            'shares': safe_float(lot.shares),
-                            'purchase_date': lot.purchase_date.isoformat(),
-                            'cost_basis': safe_float(lot.cost_basis),
-                            'days_until_long_term': lot.days_until_long_term,
-                        }
-                        for lot in p.lots_near_long_term
-                    ]
-                }
-                for p in summary.positions
-            ],
-            'urgent_lots': [
-                {
-                    'ticker': lot.ticker,
-                    'shares': safe_float(lot.shares),
-                    'purchase_date': lot.purchase_date.isoformat(),
-                    'cost_basis': safe_float(lot.cost_basis),
-                    'days_until_long_term': lot.days_until_long_term,
-                }
-                for lot in summary.urgent_lots
-            ]
-        }
-    except Exception as e:
-        import traceback
-        print(f"Error fetching portfolio data: {e}")
-        print(f"Traceback: {traceback.format_exc()}")
-        return None
+    return fetch_portfolio_snapshot_dict()
 
 
 @st.cache_data(ttl=900)
@@ -174,6 +99,62 @@ def _cached_macro_context():
 def _cached_portfolio_insights(positions_key: Tuple[Tuple[str, float], ...]):
     positions = [{"ticker": t, "current_value": v} for t, v in positions_key]
     return build_portfolio_insights(positions, get_company_profile, fetch_ohlcv)
+
+
+def _ff_factors_cache_mtime() -> float:
+    p = _PROJECT_ROOT / ".market_cache" / "ff5_factors_daily.csv"
+    try:
+        return float(os.path.getmtime(p))
+    except OSError:
+        return 0.0
+
+
+@st.cache_data(ttl=900)
+def _cached_factor_exposure(
+    positions_key: Tuple[Tuple[str, float], ...],
+    ff_cache_mtime: float,
+):
+    """ff_cache_mtime keys the cache so a refreshed FF file on disk recomputes loadings."""
+    _ = ff_cache_mtime
+    positions = [{"ticker": t, "current_value": v} for t, v in positions_key]
+    return build_factor_exposure(positions, fetch_ohlcv, period_years=3)
+
+
+@st.cache_data(ttl=900)
+def _cached_tca_estimate(ticker: str, shares: float, side: str):
+    return estimate_trade_impact(
+        ticker,
+        shares,
+        side,
+        fetch_ohlcv,
+        period_years=2,
+    )
+
+
+@st.cache_data(ttl=600)
+def _cached_iv_term_structure(ticker: str, spot_key: float):
+    """spot_key is rounded spot for cache stability; 0 means let yfinance infer spot."""
+    override = float(spot_key) if spot_key and spot_key > 0 else None
+    return build_iv_term_structure(ticker, max_expirations=12, spot_override=override)
+
+
+@st.cache_data(ttl=900)
+def _cached_fi_context_strip():
+    return build_fi_context_strip()
+
+
+@st.cache_data(ttl=900)
+def _cached_tnx_last_percent() -> float:
+    """^TNX last close in yield percent points (e.g. 4.25). Fallback 4.25."""
+    try:
+        h = yf.Ticker("^TNX").history(period="5d", interval="1d", auto_adjust=True)
+        if h is not None and not h.empty and "Close" in h.columns:
+            v = float(h["Close"].dropna().iloc[-1])
+            if v > 0:
+                return v
+    except Exception:
+        pass
+    return 4.25
 
 
 @st.cache_data(ttl=600)
@@ -305,6 +286,24 @@ st.markdown(
         padding-bottom: 0.25rem;
         border-bottom: 1px solid rgba(232, 168, 56, 0.2);
         max-width: 28rem;
+    }
+    :root {
+        --gft-research-accent: #2dd4bf;
+        --gft-exec-accent: #a5b4fc;
+    }
+    .gft-dash-section-stack-research {
+        border-color: rgba(45, 212, 191, 0.24) !important;
+        animation-delay: 0.08s;
+    }
+    .gft-dash-section-stack-research .gft-dash-kicker {
+        color: var(--gft-research-accent) !important;
+    }
+    .gft-dash-section-stack-exec {
+        border-color: rgba(165, 180, 252, 0.24) !important;
+        animation-delay: 0.14s;
+    }
+    .gft-dash-section-stack-exec .gft-dash-kicker {
+        color: var(--gft-exec-accent) !important;
     }
     .gft-dash-section {
         animation: gftDashReveal 0.55s ease-out;
@@ -571,14 +570,22 @@ def _gft_dash_callout(kind: str, title: str, body: str) -> None:
     )
 
 
-def _gft_dash_section_header(kicker: str, title: str, subtitle: Optional[str] = None) -> None:
+def _gft_dash_section_header(
+    kicker: str,
+    title: str,
+    subtitle: Optional[str] = None,
+    wrap_class: Optional[str] = None,
+) -> None:
     sub_html = (
         f'<p class="gft-dash-sub">{html.escape(subtitle)}</p>'
         if subtitle
         else ""
     )
+    cls = "gft-dash-section"
+    if wrap_class:
+        cls = f"{cls} {wrap_class}"
     st.markdown(
-        f'<div class="gft-dash-section">'
+        f'<div class="{cls}">'
         f'<span class="gft-dash-kicker">{html.escape(kicker)}</span>'
         f'<h2 class="gft-dash-title">{html.escape(title)}</h2>'
         f"{sub_html}"
@@ -709,15 +716,46 @@ def dashboard_page():
         unsafe_allow_html=True,
     )
 
-    # Add refresh button
-    col_refresh, col_spacer = st.columns([1, 5])
+    # Add refresh button and optional JSON export (cached portfolio snapshot)
+    col_refresh, col_export, col_spacer = st.columns([1, 1, 4])
     with col_refresh:
         if st.button("🔄 Refresh Prices"):
             get_portfolio_data.clear()
             _cached_macro_context.clear()
             _cached_portfolio_insights.clear()
+            _cached_factor_exposure.clear()
+            _cached_tca_estimate.clear()
             _cached_relevant_news.clear()
+            _cached_fi_context_strip.clear()
+            _cached_tnx_last_percent.clear()
+            st.session_state.pop("gft_export_tca", None)
             st.rerun()
+    with col_export:
+        _snap = get_portfolio_data()
+        if _snap and _snap.get("positions"):
+            _pk = tuple(
+                sorted(
+                    (p["ticker"], round(float(p["current_value"]), 2))
+                    for p in _snap["positions"]
+                )
+            )
+            try:
+                _macro_e = _cached_macro_context()
+                _ins_e = _cached_portfolio_insights(_pk)
+                _fe_e = _cached_factor_exposure(_pk, _ff_factors_cache_mtime())
+                _payload = build_dashboard_export_payload(_macro_e, _ins_e, _fe_e, None)
+                if st.session_state.get("gft_export_tca"):
+                    _payload["tca_estimate"] = st.session_state["gft_export_tca"]
+                st.download_button(
+                    label="⬇ JSON snapshot",
+                    data=json.dumps(_payload, indent=2, default=str),
+                    file_name="gft_dashboard_snapshot.json",
+                    mime="application/json",
+                    help="Macro, PORT-lite, Fama–French loadings; includes last TCA run from this session if present.",
+                    key="dash_export_json",
+                )
+            except Exception:
+                st.caption("Export unavailable")
 
     _gft_dash_section_header(
         "Context · GMM / BTMM",
@@ -761,6 +799,25 @@ def dashboard_page():
             "Macro snapshot unavailable",
             str(e),
         )
+
+    try:
+        st.markdown(
+            '<p class="gft-fred-subhead">FI · Credit & duration proxies</p>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "HYG/LQD/TLT/IEF and ^TNX via Yahoo—liquid ETFs and yield index, not TRACE or live bond inventory (SRCH/YAS-lite)."
+        )
+        _fi_rows, _fi_errs = _cached_fi_context_strip()
+        _fi_df = pd.DataFrame(fi_rows_to_records(_fi_rows))
+        if not _fi_df.empty:
+            if "Note" in _fi_df.columns and _fi_df["Note"].astype(str).str.strip().eq("").all():
+                _fi_df = _fi_df.drop(columns=["Note"])
+            st.dataframe(_fi_df, use_container_width=True, hide_index=True)
+        if _fi_errs:
+            st.caption("Notes: " + " ".join(_fi_errs[:3]))
+    except Exception as e:
+        _gft_dash_callout("info", "FI context strip unavailable", str(e))
 
     st.markdown("---")
 
@@ -893,12 +950,229 @@ def dashboard_page():
                     "Portfolio risk snapshot unavailable",
                     str(e),
                 )
+
+            st.markdown("---")
+            _gft_dash_section_header(
+                "Research · factors",
+                "Fama–French 5 loadings (value-weighted)",
+                "Daily excess returns regressed on Mkt-RF, SMB, HML, RMW, CMA from the "
+                "Kenneth French Data Library. Illustrative—not a buy-side risk engine.",
+                wrap_class="gft-dash-section-stack-research",
+            )
+            try:
+                fe = _cached_factor_exposure(positions_key, _ff_factors_cache_mtime())
+                if fe.data_warnings:
+                    st.caption("Notes: " + " ".join(fe.data_warnings[:8]))
+                if fe.factors_available and any(abs(v) > 1e-9 for v in fe.portfolio_factor_betas.values()):
+                    sorted_betas = sorted(
+                        fe.portfolio_factor_betas.items(),
+                        key=lambda x: abs(x[1]),
+                        reverse=True,
+                    )
+                    labels = [x[0] for x in sorted_betas]
+                    vals = [x[1] for x in sorted_betas]
+                    bar_colors = [
+                        GFT_DASH_CHART_PALETTE[i % len(GFT_DASH_CHART_PALETTE)]
+                        for i in range(len(labels))
+                    ]
+                    fig_f = go.Figure(
+                        go.Bar(
+                            x=vals,
+                            y=labels,
+                            orientation="h",
+                            marker_color=bar_colors,
+                            hovertemplate="%{y}: %{x:.3f}<extra></extra>",
+                        )
+                    )
+                    fig_f.update_layout(
+                        title={
+                            "text": "Portfolio factor loadings rank by |β|",
+                            "font": {"family": "Sora", "size": 15, "color": "#f8fafc"},
+                        },
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        font_color="#e2e8f0",
+                        font_family="IBM Plex Sans",
+                        xaxis=dict(
+                            gridcolor="rgba(148,163,184,0.12)",
+                            zeroline=True,
+                            zerolinecolor="rgba(248,250,252,0.35)",
+                            title="Loading (OLS coefficient)",
+                        ),
+                        yaxis=dict(autorange="reversed", title=""),
+                        margin=dict(l=8, r=12, t=56, b=48),
+                    )
+                    st.plotly_chart(fig_f, use_container_width=True)
+                    st.caption(
+                        f"Window: {fe.regression_start} → {fe.regression_end} · "
+                        "Ken French daily 5-factor (2×3) · as-of "
+                        f"{fe.as_of or '—'}"
+                    )
+                    wmap = {t: v for t, v in positions_key}
+                    tickers_by_w = sorted(
+                        fe.per_ticker_betas.keys(),
+                        key=lambda tk: -float(wmap.get(tk, 0)),
+                    )
+                    with st.expander("Per-ticker factor loadings"):
+                        if len(tickers_by_w) <= 15:
+                            zmat = [
+                                [fe.per_ticker_betas[tk].get(fn, 0.0) for fn in fe.factor_names]
+                                for tk in tickers_by_w
+                            ]
+                            fig_hm = go.Figure(
+                                data=go.Heatmap(
+                                    z=zmat,
+                                    x=list(fe.factor_names),
+                                    y=list(tickers_by_w),
+                                    zmid=0,
+                                    colorscale="RdBu",
+                                    hovertemplate="%{y} · %{x}: %{z:.3f}<extra></extra>",
+                                )
+                            )
+                            fig_hm.update_layout(
+                                title="Loadings heatmap (top names by portfolio weight)",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                font_color="#e2e8f0",
+                                font_family="IBM Plex Sans",
+                                title_font_family="Sora",
+                                title_font_size=14,
+                                margin=dict(l=8, r=8, t=48, b=8),
+                            )
+                            st.plotly_chart(fig_hm, use_container_width=True)
+                        rows = []
+                        for tk in tickers_by_w:
+                            row: dict = {
+                                "Ticker": tk,
+                                "R²": round(fe.per_ticker_r2.get(tk, 0.0), 3),
+                                "n": fe.per_ticker_n_obs.get(tk, 0),
+                            }
+                            for fn in fe.factor_names:
+                                row[fn] = round(fe.per_ticker_betas[tk].get(fn, 0.0), 3)
+                            rows.append(row)
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                else:
+                    _gft_dash_callout(
+                        "info",
+                        "Factor model unavailable",
+                        "Ken French factors could not be loaded or no ticker produced a long enough "
+                        "overlap. Use value-weighted β vs SPY in the PORT block above as a single-factor fallback.",
+                    )
+                    try:
+                        ins_fb = _cached_portfolio_insights(positions_key)
+                        if ins_fb.portfolio_beta is not None:
+                            st.metric("Fallback · β vs SPY", f"{ins_fb.portfolio_beta:.2f}")
+                    except Exception:
+                        pass
+            except Exception as e:
+                _gft_dash_callout("warning", "Factor exposure unavailable", str(e))
         else:
             st.markdown(
                 '<div class="gft-empty-state">No positions yet — add trades to unlock sector exposure, '
-                "β vs SPY, and the risk metrics deck.</div>",
+                "β vs SPY, factor loadings, and the risk metrics deck.</div>",
                 unsafe_allow_html=True,
             )
+
+        st.markdown("---")
+        _gft_dash_section_header(
+            "Execution · TCA",
+            "Pre-trade impact (illustrative)",
+            "Square-root participation vs recent ADV and realized vol. For sizing intuition only—"
+            "not a calibrated Almgren–Chriss implementation and not execution advice.",
+            wrap_class="gft-dash-section-stack-exec",
+        )
+        pos_tickers = [p["ticker"] for p in summary["positions"]] if summary["positions"] else []
+        tc1, tc2, tc3 = st.columns([2, 1, 1])
+        with tc1:
+            if pos_tickers:
+                mode = st.radio(
+                    "Ticker source",
+                    ["From portfolio", "Other symbol"],
+                    horizontal=True,
+                    key="dash_tca_mode",
+                )
+                if mode == "From portfolio":
+                    tca_sym = st.selectbox("Ticker", pos_tickers, key="dash_tca_pick")
+                else:
+                    tca_sym = st.text_input("Symbol", "", key="dash_tca_sym").strip().upper()
+            else:
+                tca_sym = st.text_input("Symbol", "", key="dash_tca_sym_only").strip().upper()
+        with tc2:
+            tca_shares = st.number_input(
+                "Shares",
+                min_value=0.0,
+                value=100.0,
+                step=1.0,
+                key="dash_tca_shares",
+            )
+        with tc3:
+            tca_side = st.radio("Side", ["buy", "sell"], horizontal=True, key="dash_tca_side")
+        if tca_sym and tca_shares > 0:
+            tca_res = _cached_tca_estimate(tca_sym, float(tca_shares), tca_side)
+            if tca_res is not None:
+                try:
+                    st.session_state["gft_export_tca"] = tca_to_schema(tca_res).model_dump(
+                        mode="json"
+                    )
+                except Exception:
+                    pass
+                if tca_res.data_warnings:
+                    st.caption("Notes: " + " ".join(tca_res.data_warnings[:5]))
+                with _gft_metrics_container():
+                    tm1, tm2, tm3, tm4 = st.columns(4)
+                    with tm1:
+                        st.metric("Est. impact (bps)", f"{tca_res.estimated_impact_bps:.1f}")
+                    with tm2:
+                        st.metric("Est. impact ($)", format_currency(tca_res.estimated_impact_usd))
+                    with tm3:
+                        part_pct = tca_res.participation_rate * 100
+                        st.metric(
+                            "Participation vs ADV",
+                            f"{part_pct:.1f}%" if tca_res.adv_shares > 0 else "—",
+                        )
+                    with tm4:
+                        st.metric("Ann. vol (realized)", f"{tca_res.annualized_volatility * 100:.1f}%")
+                if tca_res.adv_shares > 0:
+                    part_vis = min(tca_res.participation_rate * 100.0, 200.0)
+                    fig_tca = go.Figure(
+                        go.Bar(
+                            x=[part_vis],
+                            y=["Order vs ADV"],
+                            orientation="h",
+                            marker_color="#818cf8",
+                            hovertemplate="Participation: %{x:.1f}% of one-day ADV<extra></extra>",
+                        )
+                    )
+                    fig_tca.add_vline(
+                        x=25,
+                        line_width=2,
+                        line_dash="dash",
+                        line_color="rgba(251, 191, 36, 0.85)",
+                    )
+                    fig_tca.update_layout(
+                        title={
+                            "text": "Participation vs average daily volume (capped at 200% for chart scale)",
+                            "font": {"family": "Sora", "size": 14, "color": "#f8fafc"},
+                        },
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        font_color="#cbd5e1",
+                        font_family="IBM Plex Sans",
+                        xaxis=dict(title="% of one-day ADV", gridcolor="rgba(148,163,184,0.12)"),
+                        yaxis=dict(showticklabels=False),
+                        showlegend=False,
+                        margin=dict(l=8, r=12, t=56, b=40),
+                        annotations=[
+                            dict(
+                                x=25,
+                                y=1.15,
+                                yref="paper",
+                                text="25% ADV reference",
+                                showarrow=False,
+                                font=dict(size=11, color="#fbbf24"),
+                            )
+                        ],
+                    )
+                    st.plotly_chart(fig_tca, use_container_width=True)
 
         st.markdown("---")
 
@@ -2708,6 +2982,7 @@ def market_analysis_page():
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("🔄 Clear Cache", help="Clear cached data and refresh"):
             clear_cache()
+            _cached_iv_term_structure.clear()
             st.success("Cache cleared!")
             st.rerun()
     
@@ -3407,6 +3682,155 @@ def market_analysis_page():
                             else:
                                 st.error("❌ Failed to save TradingView signals.")
                 
+                # === OPTIONS · ATM IV TERM (BVOL / OVME-lite) ===
+                st.markdown("---")
+                st.markdown("### Options · ATM implied vol term structure")
+                st.caption(
+                    "Implied volatility at the listed strike nearest spot (call/put average when both exist). "
+                    "Source: Yahoo Finance option chains—delayed/aggregated, not a dealer surface."
+                )
+                iv_table_df = None
+                try:
+                    _spot_iv = float(summary.get("current_price") or 0.0)
+                    _sk = round(_spot_iv, 2) if _spot_iv > 0 else 0.0
+                    iv_res = _cached_iv_term_structure(ticker_input, _sk)
+                    if iv_res.data_warnings:
+                        st.caption("Notes: " + " ".join(iv_res.data_warnings[:6]))
+                    _iv_rows = [
+                        {
+                            "Expiry": p.expiry,
+                            "DTE": p.dte,
+                            "ATM strike": p.strike,
+                            "IV %": round(p.iv_atm * 100.0, 2) if p.iv_atm is not None else None,
+                            "IV src": p.source,
+                        }
+                        for p in iv_res.points
+                        if p.iv_atm is not None
+                    ]
+                    if _iv_rows:
+                        _df_iv = pd.DataFrame(_iv_rows)
+                        iv_table_df = _df_iv
+                        _insight = (
+                            f"{ticker_input}: ATM IV across {len(_df_iv)} expiries vs days to expiry"
+                            + (f" (spot ≈ ${iv_res.spot_used:,.2f})" if iv_res.spot_used else "")
+                        )
+                        fig_iv = go.Figure(
+                            go.Scatter(
+                                x=_df_iv["DTE"],
+                                y=_df_iv["IV %"],
+                                mode="lines+markers",
+                                line=dict(color="#c084fc", width=2),
+                                marker=dict(size=8, color="#e8a838", line=dict(width=1, color="rgba(15,23,42,0.5)")),
+                                hovertemplate="DTE %{x} · IV %{y:.1f}%<extra></extra>",
+                            )
+                        )
+                        fig_iv.update_layout(
+                            title={"text": _insight, "font": {"family": "Sora", "size": 14, "color": "#f8fafc"}},
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            font_color="#cbd5e1",
+                            font_family="IBM Plex Sans",
+                            xaxis=dict(title="Days to expiry", gridcolor="rgba(148,163,184,0.12)"),
+                            yaxis=dict(title="Implied vol (ATM, %)", gridcolor="rgba(148,163,184,0.12)"),
+                            margin=dict(l=8, r=8, t=56, b=40),
+                        )
+                        st.plotly_chart(fig_iv, use_container_width=True)
+                        with st.expander("IV term table", expanded=False):
+                            st.dataframe(_df_iv, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No ATM IV points returned for this symbol (try another ticker or check chain availability).")
+                except Exception as _iv_exc:
+                    st.warning(f"Options IV section unavailable: {_iv_exc}")
+                    iv_table_df = None
+
+                with st.expander("Options · Black–Scholes (European theory price)", expanded=False):
+                    st.caption(
+                        "Black–Scholes with continuous yield q. Default rate uses cached ^TNX last close (percent points). "
+                        "For comparison only—not a live quote or execution price."
+                    )
+                    _tnx_bs = _cached_tnx_last_percent()
+                    _spot_default = float(summary.get("current_price") or 100.0)
+                    bs_spot = st.number_input(
+                        "Spot ($)",
+                        min_value=0.01,
+                        value=max(0.01, _spot_default),
+                        key=f"bs_spot_{ticker_input}",
+                    )
+                    r_pct = st.number_input(
+                        "Risk-free (%, annual)",
+                        min_value=0.0,
+                        max_value=25.0,
+                        value=float(_tnx_bs),
+                        step=0.05,
+                        key=f"bs_r_{ticker_input}",
+                        help="Default seeded from ^TNX last yield.",
+                    )
+                    q_pct = st.number_input(
+                        "Dividend yield q (%, annual)",
+                        min_value=0.0,
+                        max_value=20.0,
+                        value=0.0,
+                        step=0.05,
+                        key=f"bs_q_{ticker_input}",
+                    )
+                    _preset_labels = ["Manual"]
+                    if iv_table_df is not None and not iv_table_df.empty:
+                        _preset_labels.extend(
+                            f"{row['Expiry']} · DTE {int(row['DTE'])} · IV {row['IV %']}% · K {row['ATM strike']}"
+                            for _, row in iv_table_df.iterrows()
+                        )
+                    pick = st.selectbox(
+                        "Inputs from IV table",
+                        _preset_labels,
+                        key=f"bs_pick_{ticker_input}",
+                    )
+                    if pick == "Manual":
+                        c_a, c_b, c_c = st.columns(3)
+                        with c_a:
+                            strike_bs = st.number_input(
+                                "Strike ($)",
+                                min_value=0.01,
+                                value=max(0.01, _spot_default),
+                                key=f"bs_k_{ticker_input}",
+                            )
+                        with c_b:
+                            dte_bs = st.number_input(
+                                "Days to expiry",
+                                min_value=1,
+                                max_value=3650,
+                                value=30,
+                                key=f"bs_dte_{ticker_input}",
+                            )
+                        with c_c:
+                            iv_pct_bs = st.number_input(
+                                "IV (%, annual)",
+                                min_value=0.1,
+                                max_value=500.0,
+                                value=35.0,
+                                key=f"bs_iv_{ticker_input}",
+                            )
+                    else:
+                        _pi = _preset_labels.index(pick) - 1
+                        _row = iv_table_df.iloc[_pi]
+                        strike_bs = float(_row["ATM strike"])
+                        dte_bs = int(_row["DTE"])
+                        iv_pct_bs = float(_row["IV %"])
+                        st.caption(
+                            f"Preset: strike **{strike_bs:.2f}** · DTE **{dte_bs}** · IV **{iv_pct_bs:.2f}%**"
+                        )
+                    _T = float(dte_bs) / 365.0
+                    _sig = float(iv_pct_bs) / 100.0
+                    _r = float(r_pct) / 100.0
+                    _q = float(q_pct) / 100.0
+                    _bs_out = black_scholes_european(bs_spot, strike_bs, _T, _r, _sig, _q)
+                    m1, m2, m3 = st.columns(3)
+                    with m1:
+                        st.metric("Call (theory)", f"${_bs_out.call_price:.4f}")
+                    with m2:
+                        st.metric("Put (theory)", f"${_bs_out.put_price:.4f}")
+                    with m3:
+                        st.caption(f"d1={_bs_out.d1:.3f} · d2={_bs_out.d2:.3f}")
+
                 # === COMPETITORS ===
                 st.markdown("---")
                 st.markdown("### Competitors")

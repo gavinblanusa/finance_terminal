@@ -14,9 +14,9 @@ The goal is one terminal that combines these themes: portfolio and tax control, 
 
 ## Current scope (six areas)
 
-1. **Dashboard** — Portfolio value, allocation, tax summary, unrealized gains, alerts for lots nearing long-term.
+1. **Dashboard** — Portfolio value, allocation, tax summary, unrealized gains, alerts for lots nearing long-term; macro, FI ETF/^TNX proxy strip, ranked news; Fama–French factor loadings, illustrative TCA, JSON export with optional session TCA (see README).
 2. **Portfolio & Taxes** — Trade entry and CSV import, HIFO tax lots, long-term vs short-term tracking, cost basis and gain per lot.
-3. **Market Analysis** — Ticker research, OHLCV and TradingView-style charts, valuation (P/E, revenue), company profile, fundamentals, news, technical signals.
+3. **Market Analysis** — Ticker research, OHLCV and TradingView-style charts, valuation (P/E, revenue), company profile, fundamentals, news, technical signals; ATM options IV term structure; Black–Scholes European panel (theory).
 4. **IPO Vintage Tracker** — Upcoming IPO calendar, 1/2/3-year post-IPO performance, registry and anniversary alerts.
 5. **Partnerships** — SEC 8-K Item 1.01 partnership events, configurable watchlist and counterparty highlighting.
 6. **13F Institutional Holdings** — Quarterly 13F filings by institution, holdings view, compare quarters, by-CUSIP and overlap analysis.
@@ -27,7 +27,7 @@ The goal is one terminal that combines these themes: portfolio and tax control, 
 - **Alerts and notifications** — Custom alerts for price, filings, earnings, or portfolio events.
 - **Expanded SEC** — Insider transactions, Congress-style trading data (where available), 13D/F and other filing types.
 - **Optional AI summarization** — Summaries of filings, earnings calls, or news (when adding AI tooling).
-- **API or export** — Programmatic access or export of your portfolio and saved data.
+- **API or export** — Programmatic access or export of your portfolio and saved data; `app/data_schemas.py` and `docs/DATA_LAYER_REFERENCE.md` define JSON-friendly shapes; **`app/terminal_api.py`** (FastAPI + uvicorn) serves `/v1/macro`, `/v1/portfolio`, `/v1/analytics/dashboard`, etc.
 
 ## Tech stack
 
