@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.1.0] - 2026-03-31
+
+### Added
+
+- **Partnerships EDGAR pipeline:** SEC `GET` retries with **429** handling (**Retry-After** as seconds or HTTP-date) and **5xx** backoff; **atomic** cache writes; **global date merge** of 8-K candidates across the watchlist so late tickers are not starved; optional **Exhibit 99.1** merge for Item 1.01 text; **per-accession cache** keys on primary document and filing date so metadata drift triggers a refetch; optional older 8-K rows via **`EDGAR_EXTRA_SUBMISSION_JSON_FILES_PER_CIK`** in `partnerships_config.py` (default **0**). Counterparty **interest** flags at ingest use the same rules as `partnership_signal`.
+- **Tests:** `tests/test_edgar_service_partnerships.py` for columnar parsing, cache validity, retry-after helper.
+
+### Changed
+
+- **Events cache** `cache_schema_version` bumped to **4** with the above behavior.
+- **Streamlit** `.streamlit/config.toml`: **`base = dark`**, **`borderColor`**, and **`[theme.sidebar]`** explicit colors to reduce sidebar widget empty-color console warnings.
+
 ## [0.1.0.0] - 2026-03-31
 
 ### Added
