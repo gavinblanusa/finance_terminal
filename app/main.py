@@ -1496,7 +1496,7 @@ def portfolio_taxes_page():
     st.markdown("---")
     
     # Create tabs for different input methods
-    tab1, tab2, tab3 = st.tabs(["📝 Manual Entry", "📁 CSV Import", "📊 Tax Lots"])
+    tab1, tab2, tab3 = st.tabs(["Manual entry", "CSV import", "Tax lots"])
     
     # Tab 1: Manual Trade Entry
     with tab1:
@@ -1569,7 +1569,9 @@ def portfolio_taxes_page():
                         # Clear cache so new trade shows up
                         st.cache_data.clear()
                         
-                        st.success(f"✅ Successfully added {trade_type} trade: {shares} shares of {ticker} at ${price_per_share:.2f}")
+                        st.success(
+                            f"Added {trade_type} trade: {shares} shares of {ticker} at ${price_per_share:.2f}"
+                        )
                         st.rerun()
                         
                     except Exception as e:
@@ -1603,7 +1605,7 @@ def portfolio_taxes_page():
                 df = pd.read_csv(uploaded_file)
                 
                 st.write("**Preview of uploaded data:**")
-                st.dataframe(df.head(10), use_container_width=True)
+                st.dataframe(_gft_tabular_styler(df.head(10)), use_container_width=True)
                 
                 st.markdown("---")
                 st.subheader("Map Your Columns")
@@ -1669,13 +1671,13 @@ def portfolio_taxes_page():
                         db.close()
                         
                         if successful > 0:
-                            st.success(f"✅ Successfully imported {successful} trades!")
+                            st.success(f"Imported {successful} trades")
                             # Clear cache so new trades show up
                             st.cache_data.clear()
                         if duplicates > 0:
-                            st.info(f"ℹ️ {duplicates} duplicate trades were skipped")
+                            st.info(f"{duplicates} duplicate trades were skipped")
                         if failed > 0:
-                            st.warning(f"⚠️ {failed} trades could not be imported (check data format)")
+                            st.warning(f"{failed} trades could not be imported (check data format)")
                         if successful == 0 and duplicates == 0 and failed == 0:
                             st.info("No valid trades found in CSV. Check that your Action column contains Buy/Sell transactions.")
                         
@@ -1710,7 +1712,10 @@ def portfolio_taxes_page():
                     if selected_ticker != "All" and position['ticker'] != selected_ticker:
                         continue
                     
-                    with st.expander(f"📈 {position['ticker']} - {position['total_shares']:.4f} shares", expanded=True):
+                    with st.expander(
+                        f"{position['ticker']} — {position['total_shares']:.4f} shares",
+                        expanded=True,
+                    ):
                         # Position summary metrics
                         m_col1, m_col2, m_col3, m_col4 = st.columns(4)
                         
@@ -1727,17 +1732,20 @@ def portfolio_taxes_page():
                         st.markdown("**Individual Tax Lots:**")
                         
                         lots_data = []
-                        for lot in position['tax_lots']:
-                            status_emoji = "🟢" if lot['is_long_term'] else "🟡"
-                            if lot['is_near_long_term']:
-                                status_emoji = "🔴"
+                        for lot in position["tax_lots"]:
+                            if lot["is_long_term"]:
+                                status_label = "LT"
+                            elif lot["is_near_long_term"]:
+                                status_label = "Near LT"
+                            else:
+                                status_label = "ST"
                             
                             current_price = position['current_price']
                             lot_gain = (current_price - lot['cost_basis']) * lot['shares']
                             total_cost = lot['cost_basis'] * lot['shares']
                             
                             lots_data.append({
-                                "Status": status_emoji,
+                                "Status": status_label,
                                 "Purchase Date": lot['purchase_date'],
                                 "Shares": lot['shares'],
                                 "Cost Basis": format_currency(lot['cost_basis']),
@@ -1749,12 +1757,16 @@ def portfolio_taxes_page():
                                 "Days to LT": lot['days_until_long_term'] if not lot['is_long_term'] else "—"
                             })
                         
-                        st.dataframe(lots_data, use_container_width=True, hide_index=True)
+                        st.dataframe(
+                            _gft_tabular_styler(pd.DataFrame(lots_data)),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
                         
                         # Alert for lots near long-term
                         if position['lots_near_long_term']:
                             st.warning(
-                                f"⚠️ {len(position['lots_near_long_term'])} lot(s) approaching long-term status! "
+                                f"{len(position['lots_near_long_term'])} lot(s) approaching long-term status. "
                                 "Consider holding to qualify for lower tax rates."
                             )
                         
@@ -1764,7 +1776,7 @@ def portfolio_taxes_page():
     st.markdown("---")
     
     # Recent trades section
-    st.subheader("📋 Recent Trades")
+    st.subheader("Recent trades")
     try:
         db: Session = get_db_session()
         recent_trades = db.query(Trades).order_by(Trades.trade_date.desc()).limit(20).all()
@@ -1783,7 +1795,11 @@ def portfolio_taxes_page():
                     "Total": format_currency(trade.shares * trade.price_per_share)
                 })
             
-            st.dataframe(trades_data, use_container_width=True, hide_index=True)
+            st.dataframe(
+                _gft_tabular_styler(pd.DataFrame(trades_data)),
+                use_container_width=True,
+                hide_index=True,
+            )
         else:
             st.info("No trades recorded yet. Add your first trade using the form above.")
             
@@ -4432,7 +4448,7 @@ def ipo_tracker_page():
     # ==========================================
     # SECTION 1: THE HORIZON - Upcoming IPOs
     # ==========================================
-    with st.expander("📅 **Section 1: The Horizon** - Upcoming IPOs", expanded=True):
+    with st.expander("Section 1: The Horizon — upcoming IPOs", expanded=True):
         st.markdown("### Upcoming IPO Calendar (Next 30 Days)")
         
         with st.spinner("Loading IPO calendar..."):
@@ -4463,7 +4479,7 @@ def ipo_tracker_page():
                 })
             
             st.dataframe(
-                ipo_data,
+                _gft_tabular_styler(pd.DataFrame(ipo_data)),
                 use_container_width=True,
                 hide_index=True,
                 column_config={
@@ -4480,7 +4496,7 @@ def ipo_tracker_page():
             
             # Follow IPO functionality
             st.markdown("---")
-            st.markdown("#### ⭐ Follow an Upcoming IPO")
+            st.markdown("#### Follow an upcoming IPO")
             st.caption("Save an IPO to your registry for vintage tracking once it goes public.")
             
             col1, col2, col3 = st.columns([2, 2, 1])
@@ -4533,7 +4549,7 @@ def ipo_tracker_page():
                                 )
                                 db.add(new_registry)
                                 db.commit()
-                                st.success(f"✅ Now following {selected_ipo.ticker}!")
+                                st.success(f"Now following {selected_ipo.ticker}")
                                 st.rerun()
                             
                             db.close()
@@ -4546,7 +4562,7 @@ def ipo_tracker_page():
     # ==========================================
     # SECTION 2: VINTAGE ALERTS
     # ==========================================
-    with st.expander("🔔 **Section 2: Vintage Alerts** - Anniversary Notifications", expanded=True):
+    with st.expander("Section 2: Vintage alerts — anniversary notifications", expanded=True):
         st.markdown("### IPOs Approaching Vintage Milestones")
         st.caption("Companies within ±10 days of their 1, 2, or 3-year IPO anniversary.")
         
@@ -4570,47 +4586,27 @@ def ipo_tracker_page():
                 
                 if alerts:
                     for alert in alerts:
-                        # Determine styling based on anniversary type
-                        if alert['anniversary_years'] == 1:
-                            badge_class = "vintage-1y"
-                            emoji = "🥇"
-                        elif alert['anniversary_years'] == 2:
-                            badge_class = "vintage-2y"
-                            emoji = "🥈"
-                        else:
-                            badge_class = "vintage-3y"
-                            emoji = "🥉"
-                        
-                        # Format message
-                        days = alert['days_diff']
+                        vintage_tag = f"[{alert['anniversary_years']}Y]"
+                        days = alert["days_diff"]
                         if days > 0:
                             time_msg = f"in {days} day{'s' if days != 1 else ''}"
                         elif days < 0:
                             time_msg = f"{abs(days)} day{'s' if abs(days) != 1 else ''} ago"
                         else:
-                            time_msg = "TODAY!"
-                        
-                        # Display alert card
-                        if alert['status'] == 'today':
-                            st.success(f"""
-                            {emoji} **{alert['ticker']}** ({alert['company_name']}) 
-                            — Year {alert['anniversary_years']} Anniversary is **{time_msg}** 
-                            (IPO: {alert['ipo_date'].strftime('%Y-%m-%d')})
-                            """)
-                        elif alert['status'] == 'upcoming':
-                            st.info(f"""
-                            {emoji} **{alert['ticker']}** ({alert['company_name']}) 
-                            — Year {alert['anniversary_years']} Anniversary {time_msg}
-                            (IPO: {alert['ipo_date'].strftime('%Y-%m-%d')})
-                            """)
+                            time_msg = "today"
+                        ipo_d = alert["ipo_date"].strftime("%Y-%m-%d")
+                        headline = (
+                            f"{vintage_tag} **{alert['ticker']}** ({alert['company_name']}) "
+                            f"— {alert['anniversary_years']}-year anniversary {time_msg} (IPO: {ipo_d})"
+                        )
+                        if alert["status"] == "today":
+                            st.success(headline)
+                        elif alert["status"] == "upcoming":
+                            st.info(headline)
                         else:
-                            st.warning(f"""
-                            {emoji} **{alert['ticker']}** ({alert['company_name']}) 
-                            — Year {alert['anniversary_years']} Anniversary was {time_msg}
-                            (IPO: {alert['ipo_date'].strftime('%Y-%m-%d')})
-                            """)
+                            st.warning(headline)
                 else:
-                    st.info("🎉 No vintage anniversaries within the next 10 days.")
+                    st.info("No vintage anniversaries within the next 10 days.")
             else:
                 st.info("No IPOs in your registry. Follow some IPOs to receive vintage alerts!")
                 
@@ -4620,7 +4616,7 @@ def ipo_tracker_page():
     # ==========================================
     # SECTION 3: PERFORMANCE REVIEW - Leaderboard
     # ==========================================
-    with st.expander("🏆 **Section 3: Performance Review** - Vintage Leaderboard", expanded=True):
+    with st.expander("Section 3: Performance review — vintage leaderboard", expanded=True):
         st.markdown("### IPO Performance Leaderboard")
         st.caption("Ranking your followed IPOs by total return since debut.")
         
@@ -4678,16 +4674,13 @@ def ipo_tracker_page():
                         
                         def format_vintage(ret, status):
                             if status == "Pending":
-                                return "⏳ Pending"
-                            elif ret is not None:
+                                return "Pending"
+                            if ret is not None:
                                 return f"{ret:+.2f}%"
                             return "N/A"
-                        
-                        # Rank emoji
-                        rank_emoji = "🥇" if entry['Rank'] == 1 else "🥈" if entry['Rank'] == 2 else "🥉" if entry['Rank'] == 3 else f"#{entry['Rank']}"
-                        
+
                         display_data.append({
-                            'Rank': rank_emoji,
+                            "Rank": str(entry["Rank"]),
                             'Ticker': entry['Ticker'],
                             'Company': entry['Company'][:25] + '...' if len(entry['Company']) > 25 else entry['Company'],
                             'IPO Date': entry['IPO Date'],
@@ -4700,11 +4693,11 @@ def ipo_tracker_page():
                         })
                     
                     st.dataframe(
-                        display_data,
+                        _gft_tabular_styler(pd.DataFrame(display_data)),
                         use_container_width=True,
                         hide_index=True,
                         column_config={
-                            "Rank": st.column_config.TextColumn("🏆", width="small"),
+                            "Rank": st.column_config.TextColumn("Rank", width="small"),
                             "Ticker": st.column_config.TextColumn("Ticker", width="small"),
                             "Company": st.column_config.TextColumn("Company", width="medium"),
                             "IPO Date": st.column_config.TextColumn("IPO Date", width="small"),
@@ -4719,7 +4712,7 @@ def ipo_tracker_page():
                     
                     # Summary stats
                     st.markdown("---")
-                    st.markdown("#### 📊 Portfolio Summary")
+                    st.markdown("#### Registry summary")
                     
                     total_returns = [e['Total Return %'] for e in leaderboard_data if e['Total Return %'] is not None]
                     if total_returns:
@@ -4745,7 +4738,7 @@ def ipo_tracker_page():
     # ==========================================
     # SECTION 4: VIBE CHART - IPO Trajectory Comparison
     # ==========================================
-    with st.expander("📈 **Vibe Chart** - IPO Debut Trajectory Comparison", expanded=True):
+    with st.expander("Vibe chart — IPO debut trajectory comparison", expanded=True):
         st.markdown("### Compare IPO Price Trajectories")
         st.caption("Overlay multiple IPOs aligned by their 'Day 0' (listing date) to compare debut performance.")
         
@@ -4881,7 +4874,7 @@ def ipo_tracker_page():
     # MANAGE REGISTRY
     # ==========================================
     st.markdown("---")
-    st.markdown("### 📋 Manage IPO Registry")
+    st.markdown("### Manage IPO registry")
     
     with st.expander("View & Edit Your IPO Registry", expanded=False):
         try:
@@ -4900,14 +4893,18 @@ def ipo_tracker_page():
                         'IPO Date': r.ipo_date.strftime('%Y-%m-%d') if r.ipo_date else 'N/A',
                         'IPO Price': f"${float(r.ipo_price):.2f}" if r.ipo_price else 'N/A',
                         'Exchange': r.exchange or 'N/A',
-                        'Following': '✅' if r.is_following else '❌'
+                        "Following": "Yes" if r.is_following else "No",
                     })
                 
-                st.dataframe(registry_data, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    _gft_tabular_styler(pd.DataFrame(registry_data)),
+                    use_container_width=True,
+                    hide_index=True,
+                )
                 
                 # Add manual entry form
                 st.markdown("---")
-                st.markdown("#### ➕ Add IPO Manually")
+                st.markdown("#### Add IPO manually")
                 
                 with st.form("manual_ipo_form", clear_on_submit=True):
                     col1, col2 = st.columns(2)
@@ -4942,7 +4939,7 @@ def ipo_tracker_page():
                                     )
                                     db.add(new_entry)
                                     db.commit()
-                                    st.success(f"✅ Added {manual_ticker} to registry!")
+                                    st.success(f"Added {manual_ticker} to registry")
                                     st.rerun()
                                 
                                 db.close()
@@ -4953,7 +4950,7 @@ def ipo_tracker_page():
                 
                 # Remove entry
                 st.markdown("---")
-                st.markdown("#### 🗑️ Remove from Registry")
+                st.markdown("#### Remove from registry")
                 
                 col1, col2 = st.columns([3, 1])
                 with col1:
@@ -4978,7 +4975,7 @@ def ipo_tracker_page():
                 st.info("Your IPO registry is empty. Follow upcoming IPOs or add them manually.")
                 
                 # Quick add form for empty state
-                st.markdown("#### ➕ Add Your First IPO")
+                st.markdown("#### Add your first IPO")
                 with st.form("first_ipo_form"):
                     col1, col2 = st.columns(2)
                     with col1:
@@ -5003,7 +5000,7 @@ def ipo_tracker_page():
                                 db.add(new_entry)
                                 db.commit()
                                 db.close()
-                                st.success(f"✅ Added {first_ticker}!")
+                                st.success(f"Added {first_ticker}")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error: {e}")
@@ -5071,7 +5068,7 @@ def partnerships_page():
 
     df = pd.DataFrame(rows)
     st.dataframe(
-        df,
+        _gft_tabular_styler(df),
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -5165,7 +5162,7 @@ def thirteenf_page():
                 })
             if rows:
                 df1 = pd.DataFrame(rows)
-                st.dataframe(df1, use_container_width=True, hide_index=True)
+                st.dataframe(_gft_tabular_styler(df1), use_container_width=True, hide_index=True)
         else:
             st.warning(f"No 13F data for {inst_single} {q_single}.")
     except Exception as e:
@@ -5202,7 +5199,11 @@ def thirteenf_page():
                             "Diff Val": r.get("diff_value", 0),
                         })
                     if rows_c:
-                        st.dataframe(pd.DataFrame(rows_c), use_container_width=True, hide_index=True)
+                        st.dataframe(
+                            _gft_tabular_styler(pd.DataFrame(rows_c)),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
                 else:
                     st.warning("Could not load compare data.")
             except Exception as e:
@@ -5220,7 +5221,11 @@ def thirteenf_page():
                 holders = _cached_get_holders_by_cusip(cusip_input, tuple(selected_ciks), year_c, qtr_c)
                 if holders:
                     rows_h = [{"Institution": h["filer_name"], "Shares": h["shares"], "Value ($000)": h["value_thousands"], "%": h["pct"]} for h in holders]
-                    st.dataframe(pd.DataFrame(rows_h), use_container_width=True, hide_index=True)
+                    st.dataframe(
+                        _gft_tabular_styler(pd.DataFrame(rows_h)),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
                 else:
                     st.info("No tracked institution holds this CUSIP in that quarter.")
             except Exception as e:
@@ -5237,7 +5242,11 @@ def thirteenf_page():
                 overlap_list = _cached_get_overlap_holdings(tuple(overlap_ciks), year_o, qtr_o)
                 if overlap_list:
                     rows_o = [{"CUSIP": o["cusip"], "Issuer Name": (o.get("issuer_name") or "")[:60]} for o in overlap_list]
-                    st.dataframe(pd.DataFrame(rows_o), use_container_width=True, hide_index=True)
+                    st.dataframe(
+                        _gft_tabular_styler(pd.DataFrame(rows_o)),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
                 else:
                     st.info("No common holdings for these institutions in that quarter.")
             except Exception as e:

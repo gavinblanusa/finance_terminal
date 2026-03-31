@@ -62,3 +62,6 @@ Thumbs.db
 
 # Cursor IDE
 .cursor/
+
+# Local gstack QA reports (remove this block if you want reports in git)
+.gstack/
