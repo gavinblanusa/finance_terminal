@@ -7,16 +7,20 @@ Highlights counterparties that match the configured interest list (e.g. private 
 """
 
 import json
+import os
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
 import requests
 
-from partnerships_config import WATCH_TICKERS, COUNTERPARTY_INTEREST_NAMES
+import partnerships_config as partnerships_cfg
+from partnerships_config import WATCH_TICKERS
 
-from partnership_signal import events_need_signal_refresh
+from partnership_signal import events_need_signal_refresh, resolve_counterparty_hits
 
 # SEC requires a descriptive User-Agent with contact info
 USER_AGENT = "GavinFinancialTerminal/1.0 (gavinblanusa@comcast.net)"
@@ -31,7 +35,13 @@ CACHE_DIR = _ROOT / ".edgar_cache"
 SUBMISSIONS_CACHE_HOURS = 1
 COMPANY_TICKERS_CACHE_HOURS = 24
 EVENTS_CACHE_FILE = "partnership_events.json"
-EVENTS_CACHE_SCHEMA_VERSION = 2
+EVENTS_CACHE_SCHEMA_VERSION = 4
+
+# Max 8-K rows per watchlist ticker after merge (recent + optional bulk JSON), before global date sort.
+_MAX_8K_ROWS_PER_TICKER = 48
+_SEC_GET_MAX_RETRIES = 5
+# SEC bulk submission files (CIK…-submissions-001.json) change rarely; cache longer than main submissions.
+BULK_SUBMISSIONS_CACHE_HOURS = 24
 
 # Noise: exclude these when extracting counterparties (law firms, agents, subsidiaries, etc.)
 COUNTERPARTY_NOISE = frozenset({
@@ -156,6 +166,70 @@ def _throttle():
     time.sleep(SEC_RATE_LIMIT_DELAY)
 
 
+def _retry_after_sleep_seconds(retry_after_header: Optional[str], attempt: int) -> float:
+    """Parse Retry-After: delta-seconds, HTTP-date, or fallback exponential cap."""
+    fallback = float(min(60, 2**attempt))
+    ra = retry_after_header
+    if not ra or not str(ra).strip():
+        return fallback
+    s = str(ra).strip()
+    if s.isdigit():
+        return float(min(120, int(s)))
+    try:
+        dt = parsedate_to_datetime(s)
+        if dt is None:
+            return fallback
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        delta = (dt - datetime.now(timezone.utc)).total_seconds()
+        return max(1.0, min(120.0, delta))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    try:
+        return float(min(60, float(s)))
+    except ValueError:
+        return fallback
+
+
+def _sec_get(
+    url: str,
+    headers: Dict[str, str],
+    *,
+    timeout: float = 15,
+    max_retries: int = _SEC_GET_MAX_RETRIES,
+) -> Optional[requests.Response]:
+    """
+    GET with SEC rate limit spacing, 429 Retry-After, and backoff on 5xx / network errors.
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(max_retries):
+        _throttle()
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout)
+            if r.status_code == 429:
+                wait_s = _retry_after_sleep_seconds(r.headers.get("Retry-After"), attempt)
+                print(f"[EDGAR] SEC 429, sleeping {wait_s:.1f}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait_s)
+                continue
+            if r.status_code in (500, 502, 503, 504):
+                wait_s = min(30.0, 0.5 * (2**attempt))
+                print(
+                    f"[EDGAR] SEC {r.status_code} for {url[:72]}… "
+                    f"sleep {wait_s:.1f}s ({attempt + 1}/{max_retries})"
+                )
+                time.sleep(wait_s)
+                continue
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            last_err = e
+            wait_s = min(20.0, 0.5 * (2**attempt))
+            time.sleep(wait_s)
+    if last_err:
+        print(f"[EDGAR] SEC GET gave up after {max_retries} tries: {url[:96]} — {last_err}")
+    return None
+
+
 def _ensure_cache_dir():
     CACHE_DIR.mkdir(exist_ok=True)
 
@@ -174,9 +248,12 @@ def _cached_json(path: Path, max_age_hours: float) -> Optional[dict]:
 
 
 def _save_json(path: Path, data: dict):
+    """Write JSON atomically (temp + replace) to avoid torn files on crash."""
     _ensure_cache_dir()
-    with open(path, "w", encoding="utf-8") as f:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=0)
+    os.replace(tmp, path)
 
 
 def _strip_html(html: str) -> str:
@@ -201,16 +278,15 @@ def get_ticker_to_cik() -> Dict[str, Tuple[str, str]]:
     if cached is not None:
         return _build_ticker_map(cached)
 
-    _throttle()
+    r = _sec_get(COMPANY_TICKERS_URL, _headers())
+    if r is None:
+        return {}
     try:
-        r = requests.get(COMPANY_TICKERS_URL, headers=_headers(), timeout=15)
-        r.raise_for_status()
         data = r.json()
-        _ensure_cache_dir()
         _save_json(cache_path, data)
         return _build_ticker_map(data)
-    except (requests.RequestException, json.JSONDecodeError) as e:
-        print(f"[EDGAR] Failed to fetch company tickers: {e}")
+    except json.JSONDecodeError as e:
+        print(f"[EDGAR] Failed to parse company tickers: {e}")
         return {}
 
 
@@ -236,32 +312,33 @@ def _get_submissions_for_cik(cik: str, force_refresh: bool = False) -> Optional[
             return cached
 
     url = SUBMISSIONS_URL_TEMPLATE.format(cik=cik)
-    _throttle()
+    r = _sec_get(url, _headers())
+    if r is None:
+        print(f"[EDGAR] Submissions failed for CIK {cik}")
+        return None
     try:
-        r = requests.get(url, headers=_headers(), timeout=15)
-        r.raise_for_status()
         data = r.json()
         _save_json(cache_path, data)
         return data
-    except (requests.RequestException, json.JSONDecodeError) as e:
-        print(f"[EDGAR] Submissions failed for CIK {cik}: {e}")
+    except json.JSONDecodeError as e:
+        print(f"[EDGAR] Submissions JSON invalid for CIK {cik}: {e}")
         return None
 
 
-def _parse_recent_8ks(submissions: dict) -> List[dict]:
-    """From submissions JSON, return list of 8-K filings from recent (columnar) array."""
-    filings = submissions.get("filings") or {}
-    recent = filings.get("recent")
-    if not recent or not isinstance(recent, dict):
+def _parse_columnar_8ks(block: Optional[dict]) -> List[dict]:
+    """
+    Parse 8-K rows from a SEC columnar block: either filings.recent or a bulk CIK-submissions-NNN.json root.
+    """
+    if not block or not isinstance(block, dict):
         return []
 
-    forms = recent.get("form") or []
-    accession_numbers = recent.get("accessionNumber") or []
-    filing_dates = recent.get("filingDate") or []
-    primary_docs = recent.get("primaryDocument") or []
+    forms = block.get("form") or []
+    accession_numbers = block.get("accessionNumber") or []
+    filing_dates = block.get("filingDate") or []
+    primary_docs = block.get("primaryDocument") or []
 
     n = len(forms)
-    result = []
+    result: List[dict] = []
     for i in range(n):
         if (i < len(forms) and (forms[i] or "").strip().upper() == "8-K" and
                 i < len(accession_numbers) and i < len(filing_dates)):
@@ -276,6 +353,90 @@ def _parse_recent_8ks(submissions: dict) -> List[dict]:
     return result
 
 
+def _parse_recent_8ks(submissions: dict) -> List[dict]:
+    """From company submissions JSON, 8-K rows in filings.recent only."""
+    recent = (submissions.get("filings") or {}).get("recent")
+    return _parse_columnar_8ks(recent if isinstance(recent, dict) else None)
+
+
+def _get_submissions_bulk_file(filename: str) -> Optional[dict]:
+    """Fetch CIK-submissions-NNN.json (older columnar history). Cached separately from main submissions."""
+    safe_name = filename.replace("/", "_").replace("\\", "_")
+    cache_path = CACHE_DIR / f"bulk_submissions_{safe_name}"
+    cached = _cached_json(cache_path, BULK_SUBMISSIONS_CACHE_HOURS)
+    if cached is not None:
+        return cached
+
+    url = f"https://data.sec.gov/submissions/{filename}"
+    r = _sec_get(url, _headers())
+    if r is None:
+        print(f"[EDGAR] Bulk submissions failed: {filename}")
+        return None
+    try:
+        data = r.json()
+        _save_json(cache_path, data)
+        return data
+    except json.JSONDecodeError as e:
+        print(f"[EDGAR] Bulk submissions JSON invalid {filename}: {e}")
+        return None
+
+
+def _8k_filings_for_ticker(submissions: dict, max_rows: int) -> List[dict]:
+    """
+    Merge 8-K rows from filings.recent and optionally SEC bulk submission JSON files
+    (partnerships_config.EDGAR_EXTRA_SUBMISSION_JSON_FILES_PER_CIK), dedupe by accession,
+    sort by filing date descending, return up to max_rows.
+    """
+    filings = submissions.get("filings") or {}
+    recent_block = filings.get("recent")
+    combined: List[dict] = []
+    combined.extend(_parse_columnar_8ks(recent_block if isinstance(recent_block, dict) else None))
+
+    extra_n = int(getattr(partnerships_cfg, "EDGAR_EXTRA_SUBMISSION_JSON_FILES_PER_CIK", 0) or 0)
+    for fi in (filings.get("files") or [])[: max(0, extra_n)]:
+        if not isinstance(fi, dict):
+            continue
+        name = fi.get("name")
+        if not name or not isinstance(name, str):
+            continue
+        bulk = _get_submissions_bulk_file(name)
+        if bulk:
+            combined.extend(_parse_columnar_8ks(bulk))
+
+    combined.sort(key=lambda r: (r.get("filingDate") or ""), reverse=True)
+    seen: set[str] = set()
+    out: List[dict] = []
+    for r in combined:
+        acc = (r.get("accessionNumber") or "").strip()
+        if not acc or acc in seen:
+            continue
+        seen.add(acc)
+        out.append(r)
+    return out[:max_rows]
+
+
+def _normalize_primary_doc_hint(hint: str) -> str:
+    return (hint or "").strip().lower()
+
+
+def _is_8k_disk_cache_valid(cached: dict, primary_doc_hint: str, filing_date: str) -> bool:
+    """
+    Invalidate per-accession JSON if SEC metadata we keyed on changed (e.g. primary document path).
+    Legacy caches without source_* keys remain valid until TTL.
+    """
+    if "source_primary_document" not in cached:
+        return True
+    if _normalize_primary_doc_hint(cached.get("source_primary_document") or "") != _normalize_primary_doc_hint(
+        primary_doc_hint
+    ):
+        return False
+    sf = (cached.get("source_filing_date") or "").strip()
+    cf = (filing_date or "").strip()
+    if sf and cf and sf != cf:
+        return False
+    return True
+
+
 def _accession_to_path(accession_number: str) -> str:
     """Convert accession number to URL path part (strip hyphens)."""
     return (accession_number or "").replace("-", "")
@@ -287,14 +448,11 @@ def _fetch_8k_index(cik: str, accession_number: str) -> Optional[str]:
     # Index filename is typically {accession}-index.htm
     index_name = f"{accession_number}-index.htm"
     url = f"{ARCHIVES_BASE}/{cik}/{path_part}/{index_name}"
-    _throttle()
-    try:
-        r = requests.get(url, headers=_headers_html(), timeout=15)
-        r.raise_for_status()
-        return r.text
-    except requests.RequestException as e:
-        print(f"[EDGAR] Failed to fetch index {accession_number}: {e}")
+    r = _sec_get(url, _headers_html())
+    if r is None:
+        print(f"[EDGAR] Failed to fetch index {accession_number}")
         return None
+    return r.text
 
 
 def _filename_only(href: str) -> str:
@@ -312,38 +470,75 @@ def _filename_only(href: str) -> str:
     return s
 
 
+def _index_htm_candidates(html: str) -> List[str]:
+    """Ordered unique .htm/.html filenames from a filing index page (excludes *index*)."""
+    seen: set[str] = set()
+    out: List[str] = []
+
+    def _add_raw_href(raw: str) -> None:
+        fn = _filename_only(raw)
+        if not fn or not fn.lower().endswith((".htm", ".html")):
+            return
+        if "index" in fn.lower():
+            return
+        key = fn.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(fn)
+
+    for m in re.finditer(r'href="([^"]+\.(?:htm|html))(?:"|\?|$)', html, re.I):
+        _add_raw_href(m.group(1))
+    for m in re.finditer(r'href="(ix\?doc=[^"]+\.(?:htm|html))"', html, re.I):
+        _add_raw_href(m.group(1))
+    return out
+
+
+def _is_exhibit_991_filename(filename: str) -> bool:
+    """True if filename looks like Exhibit 99.1 style (press release / agreement body)."""
+    b = _filename_only(filename).lower()
+    if not b.endswith((".htm", ".html")):
+        return False
+    return bool(
+        re.search(
+            r"ex99[-_.]?1(?:[^0-9]|\.htm|\.html)|exhibit[-_.]?99[-_.]?1|ex[-_.]99[-_.]?1(?:\.htm|\.html|$)",
+            b,
+        )
+    )
+
+
+def _pick_exhibit_991_filename(candidates: List[str], primary_filename: str) -> Optional[str]:
+    """First exhibit 99.1 candidate that is not the primary document."""
+    primary_lower = _filename_only(primary_filename).lower()
+    for fn in candidates:
+        if _filename_only(fn).lower() == primary_lower:
+            continue
+        if _is_exhibit_991_filename(fn):
+            return fn
+    return None
+
+
 def _find_primary_doc_from_index(html: str, accession_number: str, primary_doc_hint: str) -> Optional[str]:
     """
     Parse index HTML to find the primary 8-K document filename.
     Handles: href="file.htm", href="/Archives/edgar/.../file.htm", and ix?doc=/Archives/.../file.htm.
     Returns only the filename (e.g. file.htm) for building the fetch URL.
     """
-    candidates = []
-
-    # 1) Direct .htm/.html links: href="something.htm" or href="/Archives/edgar/.../file.htm"
-    pattern = re.compile(r'href="([^"]+\.(?:htm|html))(?:"|\?|$)', re.I)
-    for m in pattern.findall(html):
-        fn = _filename_only(m)
-        if fn and fn.lower().endswith((".htm", ".html")) and "index" not in fn.lower():
-            candidates.append((m, fn))
-
-    # 2) IX (inline) links: href="ix?doc=/Archives/edgar/data/CIK/ACC/filename.htm"
-    ix_pattern = re.compile(r'href="(ix\?doc=[^"]+\.(?:htm|html))"', re.I)
-    for m in ix_pattern.findall(html):
-        fn = _filename_only(m)
-        if fn and fn.lower().endswith((".htm", ".html")) and "index" not in fn.lower():
-            candidates.append((m, fn))
+    candidates = _index_htm_candidates(html)
+    if not candidates:
+        return None
 
     if primary_doc_hint and primary_doc_hint.strip():
         hint = primary_doc_hint.strip().lower()
-        for _, fn in candidates:
+        for fn in candidates:
             if hint in fn.lower():
                 return fn
 
-    for _, fn in candidates:
-        if "ex" not in fn.lower() or "8k" in fn.lower() or "8-k" in fn.lower():
+    for fn in candidates:
+        lower = fn.lower()
+        if "ex" not in lower or "8k" in lower or "8-k" in lower:
             return fn
-    return candidates[0][1] if candidates else None
+    return candidates[0]
 
 
 def _fetch_8k_document(cik: str, accession_number: str, doc_filename: str) -> Optional[str]:
@@ -357,14 +552,11 @@ def _fetch_8k_document(cik: str, accession_number: str, doc_filename: str) -> Op
     else:
         url = f"{ARCHIVES_BASE}/{cik}/{path_part}/{filename_only}"
 
-    _throttle()
-    try:
-        r = requests.get(url, headers=_headers_html(), timeout=15)
-        r.raise_for_status()
-        return r.text
-    except requests.RequestException as e:
-        print(f"[EDGAR] Failed to fetch document {filename_only}: {e}")
+    r = _sec_get(url, _headers_html())
+    if r is None:
+        print(f"[EDGAR] Failed to fetch document {filename_only}")
         return None
+    return r.text
 
 
 def _is_item_101_filing(text: str) -> bool:
@@ -513,13 +705,14 @@ def _extract_counterparties(text: str, relevance_type: str = "partnership") -> L
     return names[:8]
 
 
-def _check_interest(name: str) -> bool:
-    """True if name matches any COUNTERPARTY_INTEREST_NAMES (case-insensitive, substring)."""
-    n = (name or "").lower()
-    for interest in COUNTERPARTY_INTEREST_NAMES:
-        if (interest or "").lower() in n or n in (interest or "").lower():
-            return True
-    return False
+def _counterparty_interest_hit(name: str) -> bool:
+    """Match interest list + aliases using the same rules as partnership_signal."""
+    hit, _ = resolve_counterparty_hits(
+        [{"name": name}],
+        partnerships_cfg.COUNTERPARTY_INTEREST_NAMES,
+        partnerships_cfg.COUNTERPARTY_ALIASES,
+    )
+    return hit
 
 
 def _process_8k(cik: str, filer_ticker: str, filer_name: str, accession_number: str,
@@ -529,8 +722,10 @@ def _process_8k(cik: str, filer_ticker: str, filer_name: str, accession_number: 
     """
     cache_path = CACHE_DIR / f"8k_{_accession_to_path(accession_number)}.json"
     cached = _cached_json(cache_path, SUBMISSIONS_CACHE_HOURS * 24)
-    if cached is not None:
-        return cached.get("event")
+    if cached is not None and _is_8k_disk_cache_valid(cached, primary_doc_hint, filing_date):
+        ev = cached.get("event")
+        if isinstance(ev, dict) and ev:
+            return ev
 
     index_html = _fetch_8k_index(cik, accession_number)
     if not index_html:
@@ -545,6 +740,15 @@ def _process_8k(cik: str, filer_ticker: str, filer_name: str, accession_number: 
         return None
 
     text = _strip_html(doc_html)
+    index_candidates = _index_htm_candidates(index_html)
+    exhibit_fn = _pick_exhibit_991_filename(index_candidates, doc_filename)
+    if exhibit_fn:
+        ex_html = _fetch_8k_document(cik, accession_number, exhibit_fn)
+        if ex_html:
+            ex_text = _strip_html(ex_html)
+            if len(ex_text) > 80:
+                text = f"{text}\n\n--- Exhibit 99.1 ---\n\n{ex_text}"
+
     if not _is_item_101_filing(text):
         return None
 
@@ -556,7 +760,7 @@ def _process_8k(cik: str, filer_ticker: str, filer_name: str, accession_number: 
     counterparty_raw = _extract_counterparties(text, relevance)
     counterparties = []
     for name in counterparty_raw:
-        counterparties.append({"name": name, "is_interest": _check_interest(name)})
+        counterparties.append({"name": name, "is_interest": _counterparty_interest_hit(name)})
 
     path_part = _accession_to_path(accession_number)
     sec_url = f"{ARCHIVES_BASE}/{cik}/{path_part}/{doc_filename}"
@@ -586,7 +790,15 @@ def _process_8k(cik: str, filer_ticker: str, filer_name: str, accession_number: 
         "snippet": snippet or None,
         "relevance_type": relevance,
     }
-    _save_json(cache_path, {"event": event, "cached_at": datetime.now().isoformat()})
+    _save_json(
+        cache_path,
+        {
+            "event": event,
+            "cached_at": datetime.now().isoformat(),
+            "source_primary_document": _normalize_primary_doc_hint(primary_doc_hint),
+            "source_filing_date": (filing_date or "").strip(),
+        },
+    )
     return event
 
 
@@ -644,8 +856,10 @@ def refresh_edgar_data(limit: int = 50) -> Tuple[List[dict], List[str]]:
         warnings.append("SEC company ticker list unavailable; cannot map symbols to CIK.")
         return [], warnings
 
-    all_events = []
-    seen_accessions = set()
+    all_events: List[dict] = []
+    seen_accessions: set[str] = set()
+    # Merge 8-K rows across all watch tickers by filing date so early symbols do not starve the rest.
+    candidates: List[dict] = []
 
     for ticker in WATCH_TICKERS:
         t = str(ticker).upper()
@@ -658,25 +872,38 @@ def refresh_edgar_data(limit: int = 50) -> Tuple[List[dict], List[str]]:
         if not submissions:
             continue
         name = submissions.get("name") or company_name or t
-        eight_ks = _parse_recent_8ks(submissions)
+        eight_ks = _8k_filings_for_ticker(submissions, _MAX_8K_ROWS_PER_TICKER)
         for filing in eight_ks:
-            acc = filing.get("accessionNumber") or ""
-            if acc in seen_accessions:
-                continue
-            seen_accessions.add(acc)
-            event = _process_8k(
-                cik=cik,
-                filer_ticker=t,
-                filer_name=name,
-                accession_number=acc,
-                filing_date=filing.get("filingDate") or "",
-                primary_doc_hint=filing.get("primaryDocument") or "",
+            candidates.append(
+                {
+                    "cik": cik,
+                    "filer_ticker": t,
+                    "filer_name": name,
+                    "accessionNumber": filing.get("accessionNumber") or "",
+                    "filingDate": filing.get("filingDate") or "",
+                    "primaryDocument": filing.get("primaryDocument") or "",
+                }
             )
-            if event:
-                all_events.append(event)
-            if len(all_events) >= limit * 2:
-                break
-        if len(all_events) >= limit * 2:
+
+    candidates.sort(key=lambda row: (row.get("filingDate") or ""), reverse=True)
+
+    max_raw = max(limit * 2, 1)
+    for row in candidates:
+        acc = (row.get("accessionNumber") or "").strip()
+        if not acc or acc in seen_accessions:
+            continue
+        seen_accessions.add(acc)
+        event = _process_8k(
+            cik=row["cik"],
+            filer_ticker=row["filer_ticker"],
+            filer_name=row["filer_name"],
+            accession_number=acc,
+            filing_date=row.get("filingDate") or "",
+            primary_doc_hint=row.get("primaryDocument") or "",
+        )
+        if event:
+            all_events.append(event)
+        if len(all_events) >= max_raw:
             break
 
     # Sort by filing date descending, then take limit

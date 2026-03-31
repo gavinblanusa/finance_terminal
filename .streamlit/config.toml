@@ -1,6 +1,15 @@
 [theme]
+base = "dark"
 primaryColor = "#1F77B4"
 backgroundColor = "#0E1117"
 secondaryBackgroundColor = "#262730"
 textColor = "#FFFFFF"
 font = "sans serif"
+borderColor = "#3E3E4A"
+
+# Explicit sidebar colors avoid empty-string widget theme warnings in the browser console.
+[theme.sidebar]
+backgroundColor = "#262730"
+secondaryBackgroundColor = "#0E1117"
+textColor = "#FFFFFF"
+borderColor = "#3E3E4A"

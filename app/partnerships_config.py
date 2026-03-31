@@ -3,6 +3,7 @@ Partnerships (8-K Watch) configuration.
 
 Edit WATCH_TICKERS and COUNTERPARTY_INTEREST_NAMES here; the app loads this at runtime.
 - WATCH_TICKERS: public company tickers we poll SEC submissions for (8-K filings).
+- EDGAR_EXTRA_SUBMISSION_JSON_FILES_PER_CIK: optional older 8-K rows from SEC bulk submissions JSON (0 = default).
 - COUNTERPARTY_INTEREST_NAMES: private/other names we highlight when they appear as counterparty.
 - COUNTERPARTY_ALIASES: canonical label -> strings to match in extracted counterparty text.
 - FILER_CAP_USD_*: highlight / score filers in this market-cap band (USD).
@@ -11,6 +12,10 @@ Edit WATCH_TICKERS and COUNTERPARTY_INTEREST_NAMES here; the app loads this at r
 # Filer market-cap band for scoring and default table filter (USD).
 FILER_CAP_USD_MIN = 500_000_000
 FILER_CAP_USD_MAX = 20_000_000_000
+
+# Extra SEC submission JSON files per CIK on Refresh (filings.files), e.g. CIK…-submissions-001.json.
+# 0 = only filings.recent (default, fewer HTTP calls). 1+ pulls older 8-K history; each tick adds latency.
+EDGAR_EXTRA_SUBMISSION_JSON_FILES_PER_CIK = 0
 
 # Canonical name -> substrings for matching (case-insensitive). Keep fragments ≥4 chars when possible.
 COUNTERPARTY_ALIASES = {
