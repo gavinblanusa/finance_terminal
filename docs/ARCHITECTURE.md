@@ -68,9 +68,10 @@ Refactor note: See **MARKET_ANALYSIS_DATA_REFACTOR.md** for planned auto-save an
 ### Partnerships
 
 1. **Event list**: `edgar_service.get_partnership_events()` → reads `.edgar_cache/partnership_events.json` if valid; else `refresh_edgar_data()` which uses SEC EDGAR (ticker→CIK, submissions, 8-K docs), filters Item 1.01, extracts counterparties, then writes back to `.edgar_cache/`.
-2. **Enrichment**: After refresh (and on read when `signal_version` is stale), `partnership_enrichment.enrich_partnership_events()` batches **yfinance** market cap per filer ticker, then `partnership_signal.enrich_event_dict()` adds `signal_score`, `signal_reasons`, `display_excerpt`, `interest_hit` / `interest_labels`, and `filer_in_cap_band`. Cache file may include `cache_schema_version`.
-3. **Config**: `partnerships_config.py` defines **WATCH_TICKERS**, **COUNTERPARTY_INTEREST_NAMES**, **COUNTERPARTY_ALIASES**, and **FILER_CAP_USD_MIN / MAX** for scoring and UI filters.
-4. **UI**: `main.py` `partnerships_page()` … tabular signal columns, cap filter, optional “Other” relevance rows, inspect selectbox for full excerpt.
+2. **Refresh return value**: `refresh_edgar_data()` returns `(events, warnings)`; `warnings` lists skipped watchlist tickers (e.g. no CIK). The Streamlit Refresh button surfaces `warnings` when non-empty.
+3. **Enrichment**: After refresh (and on read when any row’s `signal_version` is stale), `partnership_enrichment.enrich_partnership_events()` batches **yfinance** market cap per filer ticker, then `partnership_signal.enrich_event_dict()` adds `signal_score`, `signal_reasons`, `display_excerpt`, `interest_hit` / `interest_labels`, and `filer_in_cap_band`. Cache file may include `cache_schema_version`.
+4. **Config**: `partnerships_config.py` defines **WATCH_TICKERS**, **COUNTERPARTY_INTEREST_NAMES**, **COUNTERPARTY_ALIASES**, and **FILER_CAP_USD_MIN / MAX** for scoring and UI filters.
+5. **UI**: `main.py` `partnerships_page()` … combined **Signal** column (score + HIT + reasons), cap filter with **All (dim outside band)** styling, optional “Other” relevance rows, inspect control for full excerpt and reasons, **About this data** expander.
 
 ### 13F Institutional Holdings
 

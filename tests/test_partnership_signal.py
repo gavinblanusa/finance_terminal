@@ -6,6 +6,7 @@ from partnership_signal import (
     SIGNAL_VERSION,
     build_signal_reasons,
     enrich_event_dict,
+    events_need_signal_refresh,
     filer_in_cap_band,
     format_display_excerpt,
     resolve_counterparty_hits,
@@ -47,6 +48,21 @@ def test_build_signal_reasons_includes_interest():
     reasons = build_signal_reasons("partnership", ["OpenAI"], True, 1)
     assert any("Interest" in r for r in reasons)
     assert any("Strategic" in r for r in reasons)
+
+
+def test_name_matches_word_boundary_ramp_not_rampage():
+    """4+ char aliases use token boundaries so Ramp does not match Rampage."""
+    from partnership_signal import _name_matches_fragment
+
+    assert _name_matches_fragment("Ramp Inc", "Ramp") is True
+    assert _name_matches_fragment("Rampage Technologies LLC", "Ramp") is False
+    assert _name_matches_fragment("OpenAI LP", "OpenAI") is True
+
+
+def test_events_need_signal_refresh_any_row():
+    assert events_need_signal_refresh([{"signal_version": 1}, {"signal_version": SIGNAL_VERSION}]) is True
+    assert events_need_signal_refresh([{"signal_version": SIGNAL_VERSION}]) is False
+    assert events_need_signal_refresh([]) is False
 
 
 def test_enrich_event_dict_sets_signal_version():

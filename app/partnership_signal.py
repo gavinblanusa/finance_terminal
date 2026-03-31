@@ -5,10 +5,11 @@ Testable without SEC or Streamlit.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Bump when scoring / enrichment outputs change (invalidates stale cached JSON rows).
-SIGNAL_VERSION = 2
+SIGNAL_VERSION = 3
 
 
 def format_display_excerpt(snippet: Optional[str], max_len: int = 220) -> str:
@@ -28,7 +29,7 @@ def filer_in_cap_band(market_cap: Optional[float], cap_min: float, cap_max: floa
 
 
 def _name_matches_fragment(corp_name: str, fragment: str) -> bool:
-    """Conservative match: substring for longer fragments; tighter for very short tickers."""
+    """Conservative match: whole-token for 4+ char fragments (avoids Ramp in Rampage); tighter for short."""
     cn = (corp_name or "").lower().strip()
     frag = (fragment or "").lower().strip()
     if not cn or not frag:
@@ -40,7 +41,16 @@ def _name_matches_fragment(corp_name: str, fragment: str) -> bool:
             if cn.startswith(frag + sep) or cn.endswith(sep + frag):
                 return True
         return f" {frag} " in f" {cn} "
-    return frag in cn
+    # ASCII-ish token boundary: good enough for SEC-extracted Latin company names.
+    pat = re.compile(r"(?<![a-z0-9])" + re.escape(frag) + r"(?![a-z0-9])", re.IGNORECASE)
+    return pat.search(cn) is not None
+
+
+def events_need_signal_refresh(events: List[dict], version: int = SIGNAL_VERSION) -> bool:
+    """True if any row is missing or on an older signal_version (safer than checking [0] only)."""
+    if not events:
+        return False
+    return any(e.get("signal_version") != version for e in events)
 
 
 def resolve_counterparty_hits(

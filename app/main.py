@@ -677,6 +677,28 @@ def _gft_tabular_styler(df: pd.DataFrame):
     )
 
 
+def _gft_partnerships_styler(df: pd.DataFrame, dim_row_indices: Optional[set[int]] = None):
+    """Tape table + optional muted rows for out-of-cap filers (DESIGN.md secondary text #94A3B8)."""
+    if df.empty:
+        return df
+    styler = df.style.set_properties(
+        **{
+            "font-family": "'JetBrains Mono', ui-monospace, monospace",
+            "font-variant-numeric": "tabular-nums",
+        }
+    )
+    if dim_row_indices:
+        muted = "#94A3B8"
+
+        def _dim_row(row):
+            if row.name in dim_row_indices:
+                return [f"color: {muted}"] * len(row)
+            return [""] * len(row)
+
+        styler = styler.apply(_dim_row, axis=1)
+    return styler
+
+
 def _gft_render_news_hero_cards(ranked: list, limit: int = 3) -> None:
     """Top stories as compact cards (RankedNewsItem list)."""
     if not ranked:
@@ -5046,8 +5068,13 @@ def partnerships_page():
         if st.button("Refresh", key="partnerships_refresh", help="Fetch latest 8-K filings from SEC"):
             with st.spinner("Fetching SEC EDGAR data..."):
                 try:
-                    refresh_edgar_data(limit=50)
+                    _, refresh_warnings = refresh_edgar_data(limit=50)
                     _cached_get_partnership_events.clear()
+                    if refresh_warnings:
+                        st.warning(
+                            "Partial refresh — some watchlist symbols were skipped:\n\n"
+                            + "\n".join(f"- {w}" for w in refresh_warnings)
+                        )
                     st.success("Data refreshed.")
                     st.rerun()
                 except Exception as e:
@@ -5064,14 +5091,14 @@ def partnerships_page():
                 "target_band_or_unknown",
                 "all",
             ],
-            index=2,
+            index=0,
             format_func=lambda x: {
                 "target_band": f"In band (${cap_lo_b:.1f}B–${cap_hi_b:.0f}B)",
                 "target_band_or_unknown": "In band + unknown cap",
-                "all": "All (show band status)",
+                "all": "All (dim outside band)",
             }[x],
             key="partnerships_cap_filter",
-            help="Watchlist skews megacap; **All** avoids an empty first load. Use **In band** for the mid-cap thesis.",
+            help="**In band** matches the thesis range. **All** shows every row; filers outside the band use muted text.",
         )
     with fcol2:
         show_other = st.checkbox(
@@ -5081,6 +5108,11 @@ def partnerships_page():
         )
     with fcol3:
         st.caption("Sort: **Interest hit** → **score** → **filing date**.")
+
+    st.caption(
+        "Megacap-heavy watchlists often yield an empty **In band** view. Switch to **All (dim outside band)** "
+        "to see filings while keeping out-of-band rows visually de-emphasized."
+    )
 
     try:
         events = _cached_get_partnership_events(50)
@@ -5119,7 +5151,8 @@ def partnerships_page():
         return
 
     rows = []
-    for ev in filtered:
+    dim_row_indices: set[int] = set()
+    for row_idx, ev in enumerate(filtered):
         filer = (
             f"{ev.get('filer_ticker', '')} "
             f"({ev.get('filer_name', '')[:28]}{'…' if len(ev.get('filer_name', '') or '') > 28 else ''})"
@@ -5129,13 +5162,14 @@ def partnerships_page():
         type_label = "Partnership" if relevance == "partnership" else "Other"
         counterparties = ev.get("counterparties") or []
         cp_display = ", ".join(c.get("name", "") for c in counterparties) if counterparties else "—"
-        interest_badge = "Yes" if ev.get("interest_hit") else "—"
         sec_url = ev.get("sec_url") or ""
         score = int(ev.get("signal_score") or 0)
         reasons = ev.get("signal_reasons") or []
-        why = "; ".join(reasons[:2]) if reasons else "—"
+        hit_mark = "HIT" if ev.get("interest_hit") else "—"
+        r2 = "; ".join(reasons[:2]) if reasons else "—"
         if len(reasons) > 2:
-            why += "…"
+            r2 += "…"
+        signal_cell = f"{score:>3} · {hit_mark}\n{r2}"
         excerpt = (ev.get("display_excerpt") or ev.get("snippet") or "").strip() or "—"
         if len(excerpt) > 120:
             excerpt = excerpt[:119] + "…"
@@ -5148,37 +5182,36 @@ def partnerships_page():
         elif cap_filter == "all":
             cap_cell = f"{cap_cell} · ?"
 
-        sig_line2 = ", ".join(ev.get("interest_labels") or []) or "—"
-        signal_cell = ("HIT · " + sig_line2) if ev.get("interest_hit") else sig_line2
+        if cap_filter == "all" and band is False:
+            dim_row_indices.add(row_idx)
 
         rows.append({
-            "Score": score,
-            "Hit": interest_badge,
             "Filing date": filing_date,
             "Filer": filer,
             "Cap": cap_cell,
             "Type": type_label,
             "Signal": signal_cell,
-            "Why": why,
             "Excerpt": excerpt,
             "Counterparties": cp_display,
             "Link": sec_url,
         })
 
     df = pd.DataFrame(rows)
+    styler = _gft_partnerships_styler(df, dim_row_indices if dim_row_indices else None)
     st.dataframe(
-        _gft_tabular_styler(df),
+        styler,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Score": st.column_config.NumberColumn("Score", width="small", help="0–100 sort rank"),
-            "Hit": st.column_config.TextColumn("Interest", width="small"),
             "Filing date": st.column_config.TextColumn("Filing date", width="small"),
             "Filer": st.column_config.TextColumn("Filer", width="medium"),
             "Cap": st.column_config.TextColumn("Market cap", width="small"),
             "Type": st.column_config.TextColumn("Type", width="small"),
-            "Signal": st.column_config.TextColumn("Signal", width="medium"),
-            "Why": st.column_config.TextColumn("Why", width="large"),
+            "Signal": st.column_config.TextColumn(
+                "Signal",
+                width="medium",
+                help="Line 1: score and interest hit. Line 2: top reasons (full list in Inspect below).",
+            ),
             "Excerpt": st.column_config.TextColumn("Excerpt", width="large"),
             "Counterparties": st.column_config.TextColumn("Counterparties", width="large"),
             "Link": st.column_config.LinkColumn("SEC", display_text="View", width="small"),
@@ -5203,15 +5236,20 @@ def partnerships_page():
                 disabled=True,
                 key=f"partnerships_excerpt_{choice}",
             )
+        reasons_full = ev.get("signal_reasons") or []
+        if reasons_full:
+            st.caption("**Why (full):** " + " · ".join(reasons_full))
         st.caption(ev.get("sec_url") or "")
 
     with st.expander("About this data"):
         st.caption(
             "Data from SEC EDGAR. **Partnership** vs **Other** uses keyword scoring on filing text; "
-            "**Financing** is dropped. **Interest** uses your `partnerships_config` names and aliases. "
-            "**Score** ranks interest hits, partnership language, counterparty extraction, and whether "
-            f"the filer’s market cap (yfinance) sits in **${cap_lo_b:.1f}B–${cap_hi_b:.0f}B**. "
-            "Unknown cap does not auto-exclude when you pick **In band + unknown cap**."
+            "**Financing** is dropped. **Interest** uses your `partnerships_config` names and aliases "
+            "(word-boundary style matching for 4+ character names to cut false positives). "
+            "**Score** (0–100) weights interest hits, partnership-type language, counterparty extraction, "
+            f"and whether the filer’s market cap (yfinance, best-effort) sits in **${cap_lo_b:.1f}B–${cap_hi_b:.0f}B**. "
+            "**Unknown cap** is labeled in the Cap column; use **In band + unknown cap** to keep those rows visible. "
+            "**All (dim outside band)** shows every passing row but mutes filers clearly outside the cap band."
         )
 
 

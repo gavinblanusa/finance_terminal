@@ -16,7 +16,7 @@ import requests
 
 from partnerships_config import WATCH_TICKERS, COUNTERPARTY_INTEREST_NAMES
 
-from partnership_signal import SIGNAL_VERSION
+from partnership_signal import events_need_signal_refresh
 
 # SEC requires a descriptive User-Agent with contact info
 USER_AGENT = "GavinFinancialTerminal/1.0 (gavinblanusa@comcast.net)"
@@ -605,7 +605,7 @@ def get_partnership_events(limit: int = 50, force_refresh: bool = False) -> List
             with open(events_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             events = data.get("events") or []
-            if events and events[0].get("signal_version") != SIGNAL_VERSION:
+            if events_need_signal_refresh(events):
                 try:
                     events = enrich_partnership_events(events)
                     _save_json(
@@ -623,21 +623,26 @@ def get_partnership_events(limit: int = 50, force_refresh: bool = False) -> List
             pass
 
     if force_refresh:
-        return refresh_edgar_data(limit=limit)
+        events, _warnings = refresh_edgar_data(limit=limit)
+        return events
     return []
 
 
-def refresh_edgar_data(limit: int = 50) -> List[dict]:
+def refresh_edgar_data(limit: int = 50) -> Tuple[List[dict], List[str]]:
     """
     Force refresh: fetch submissions for all watch tickers, process 8-Ks with Item 1.01,
     extract counterparties, cache results, and return events (newest first, up to limit).
+
+    Returns (events, warnings). Warnings are safe to show in the UI (skipped tickers, etc.).
     """
     from partnership_enrichment import enrich_partnership_events
 
     _ensure_cache_dir()
     ticker_to_cik = get_ticker_to_cik()
+    warnings: List[str] = []
     if not ticker_to_cik:
-        return []
+        warnings.append("SEC company ticker list unavailable; cannot map symbols to CIK.")
+        return [], warnings
 
     all_events = []
     seen_accessions = set()
@@ -645,6 +650,7 @@ def refresh_edgar_data(limit: int = 50) -> List[dict]:
     for ticker in WATCH_TICKERS:
         t = str(ticker).upper()
         if t not in ticker_to_cik:
+            warnings.append(f"No CIK mapping for watchlist ticker {t} (skipped).")
             print(f"[EDGAR] Skipping unknown ticker: {ticker}")
             continue
         cik, company_name = ticker_to_cik[t]
@@ -688,7 +694,7 @@ def refresh_edgar_data(limit: int = 50) -> List[dict]:
             "cache_schema_version": EVENTS_CACHE_SCHEMA_VERSION,
         },
     )
-    return events
+    return events, warnings
 
 
 def clear_edgar_cache():
