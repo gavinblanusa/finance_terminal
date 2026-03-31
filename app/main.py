@@ -710,7 +710,7 @@ def _gft_render_urgent_tax_alerts(lots: list, format_currency_fn) -> None:
 
 def dashboard_page():
     """Display the main dashboard page with portfolio overview."""
-    st.title("📊 Dashboard")
+    st.title("Dashboard")
     st.markdown(
         '<p class="gft-dash-page-tagline">Tape · book · tax · flow</p>',
         unsafe_allow_html=True,
@@ -719,7 +719,7 @@ def dashboard_page():
     # Add refresh button and optional JSON export (cached portfolio snapshot)
     col_refresh, col_export, col_spacer = st.columns([1, 1, 4])
     with col_refresh:
-        if st.button("🔄 Refresh Prices"):
+        if st.button("Refresh prices"):
             get_portfolio_data.clear()
             _cached_macro_context.clear()
             _cached_portfolio_insights.clear()
@@ -747,7 +747,7 @@ def dashboard_page():
                 if st.session_state.get("gft_export_tca"):
                     _payload["tca_estimate"] = st.session_state["gft_export_tca"]
                 st.download_button(
-                    label="⬇ JSON snapshot",
+                    label="Download JSON snapshot",
                     data=json.dumps(_payload, indent=2, default=str),
                     file_name="gft_dashboard_snapshot.json",
                     mime="application/json",
@@ -1444,7 +1444,7 @@ def dashboard_page():
 
 def portfolio_taxes_page():
     """Display portfolio and tax management page with trade entry and CSV import."""
-    st.title("💼 Portfolio & Taxes")
+    st.title("Portfolio & Taxes")
     st.markdown("---")
     
     # Create tabs for different input methods
@@ -2936,7 +2936,7 @@ def get_signal_badge(signal: str) -> str:
 
 def market_analysis_page():
     """Display market analysis page with technical indicators and signals."""
-    st.title("📈 Market Analysis")
+    st.title("Market Analysis")
     
     # Custom CSS for Bloomberg dark theme
     st.markdown("""
@@ -2980,7 +2980,7 @@ def market_analysis_page():
     
     with col_refresh:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("🔄 Clear Cache", help="Clear cached data and refresh"):
+        if st.button("Clear cache", help="Clear cached data and refresh"):
             clear_cache()
             _cached_iv_term_structure.clear()
             st.success("Cache cleared!")
@@ -3302,7 +3302,7 @@ def market_analysis_page():
                     )
                     # Force refetch from API (skip DB) to get best-available P/E from all sources
                     refetch_key = f"valuation_refetch_{ticker_input}"
-                    if st.button("🔄 Refetch from API", key=refetch_key, help="Skip database and fetch fresh P/E and revenue from APIs (best available data)"):
+                    if st.button("Refetch from API", key=refetch_key, help="Skip database and fetch fresh P/E and revenue from APIs (best available data)"):
                         st.session_state["valuation_skip_db"] = True
                 
                 skip_db = st.session_state.pop("valuation_skip_db", False)
@@ -3432,7 +3432,7 @@ def market_analysis_page():
                         if from_db:
                             st.success("📂 From DB")
                         else:
-                            if st.button("💾 Save", key=f"save_valuation_{ticker_input}", help="Save this ticker's valuation data to your database"):
+                            if st.button("Save", key=f"save_valuation_{ticker_input}", help="Save this ticker's valuation data to your database"):
                                 # Get the raw data to save
                                 pe_history = valuation_data.get('pe_data', pd.DataFrame())
                                 revenue_data = valuation_data.get('revenue_data', pd.DataFrame())
@@ -3675,7 +3675,7 @@ def market_analysis_page():
                     if tv_cache_status['is_fresh']:
                         st.success("📂 Cached")
                     else:
-                        if st.button("💾 Save TV", key=f"save_tv_{ticker_input}_{tv_timeframe}", help="Save TradingView signals to cache"):
+                        if st.button("Save TV signals", key=f"save_tv_{ticker_input}_{tv_timeframe}", help="Save TradingView signals to cache"):
                             if save_tv_signals_to_cache(ticker_input, df_tv_with_signals, tv_timeframe):
                                 st.success(f"✅ Saved TradingView signals for {ticker_input}!")
                                 st.rerun()
@@ -4024,7 +4024,7 @@ def market_analysis_page():
                 key="alert_price"
             )
             
-            if st.button("➕ Add to Watchlist", use_container_width=True):
+            if st.button("Add to watchlist", use_container_width=True):
                 if new_ticker:
                     try:
                         db = get_db_session()
@@ -4059,7 +4059,7 @@ def market_analysis_page():
                         key="remove_watchlist_ticker"
                     )
                     
-                    if st.button("🗑️ Remove from Watchlist", use_container_width=True):
+                    if st.button("Remove from watchlist", use_container_width=True):
                         try:
                             db = get_db_session()
                             db.query(Watchlist).filter(Watchlist.ticker == ticker_to_remove).delete()
@@ -4084,7 +4084,7 @@ def market_analysis_page():
             with header_col1:
                 st.markdown("### 📊 Watchlist Summary")
             with header_col2:
-                if st.button("🔄 Refresh", help="Clear cached data and fetch fresh info", key="refresh_watchlist"):
+                if st.button("Refresh", help="Clear cached data and fetch fresh info", key="refresh_watchlist"):
                     # Clear ticker info cache for all watchlist items
                     cache_dir = _PROJECT_ROOT / ".market_cache"
                     if cache_dir.exists():
@@ -4330,7 +4330,7 @@ def market_analysis_page():
 
 def ipo_tracker_page():
     """Display IPO Vintage Tracker page with calendar, alerts, and performance analysis."""
-    st.title("🚀 IPO Vintage Tracker")
+    st.title("IPO Vintage Tracker")
     
     # Custom CSS for IPO tracker styling
     st.markdown("""
@@ -4363,7 +4363,7 @@ def ipo_tracker_page():
     # Refresh button
     col_refresh, col_spacer = st.columns([1, 5])
     with col_refresh:
-        if st.button("🔄 Refresh Data"):
+        if st.button("Refresh data"):
             clear_ipo_cache()
             st.cache_data.clear()
             st.rerun()
@@ -4440,7 +4440,7 @@ def ipo_tracker_page():
             
             with col3:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("⭐ Follow IPO", use_container_width=True, type="primary"):
+                if st.button("Follow IPO", use_container_width=True, type="primary"):
                     if selected_ipo:
                         try:
                             db = get_db_session()
@@ -4903,7 +4903,7 @@ def ipo_tracker_page():
                     )
                 with col2:
                     st.markdown("<br>", unsafe_allow_html=True)
-                    if st.button("🗑️ Remove", use_container_width=True):
+                    if st.button("Remove", use_container_width=True):
                         try:
                             db = get_db_session()
                             db.query(IPO_Registry).filter(IPO_Registry.ticker == ticker_to_remove).delete()
@@ -5352,12 +5352,12 @@ def macro_dashboard_page():
     import plotly.express as px
     import pandas as pd
     
-    st.title("🌍 Macro Dashboard")
+    st.title("Macro Dashboard")
     st.markdown("---")
     
     col_refresh, col_spacer = st.columns([1, 5])
     with col_refresh:
-        if st.button("🔄 Refresh Macro Data"):
+        if st.button("Refresh macro data"):
             st.cache_data.clear()
             st.rerun()
             
@@ -5534,7 +5534,7 @@ def main():
             st.session_state.db_initialized = True
     
     # Sidebar navigation
-    st.sidebar.title("📈 Gavin Financial Terminal")
+    st.sidebar.title("Gavin Financial Terminal")
     st.sidebar.markdown("---")
     
     # Navigation menu
