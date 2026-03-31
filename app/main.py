@@ -13,6 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date
+import html
 import decimal
 from decimal import Decimal
 from sqlalchemy.orm import Session
@@ -60,8 +61,11 @@ from thirteenf_service import (
     get_overlap_holdings,
 )
 from macro_data import fetch_macro_indicator
+from macro_context import build_macro_context, macro_context_to_dataframes
+from portfolio_insights import build_portfolio_insights
+from relevant_news import build_relevant_news
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 # Project root (caches at Invest/ root)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -161,6 +165,26 @@ def get_portfolio_data():
         return None
 
 
+@st.cache_data(ttl=900)
+def _cached_macro_context():
+    return build_macro_context()
+
+
+@st.cache_data(ttl=900)
+def _cached_portfolio_insights(positions_key: Tuple[Tuple[str, float], ...]):
+    positions = [{"ticker": t, "current_value": v} for t, v in positions_key]
+    return build_portfolio_insights(positions, get_company_profile, fetch_ohlcv)
+
+
+@st.cache_data(ttl=600)
+def _cached_relevant_news(port_tuple: Tuple[str, ...], watch_tuple: Tuple[str, ...]):
+    return build_relevant_news(
+        list(port_tuple),
+        list(watch_tuple),
+        lambda t, lim: fetch_company_news(t, lim),
+    )
+
+
 # -----------------------------------------------------------------------------
 # Cached data loaders (st.cache_data) to avoid redundant work on reruns.
 # Only idempotent, serializable-return functions; TTLs keep data reasonably fresh.
@@ -244,7 +268,12 @@ st.set_page_config(
 )
 
 # Minimal CSS overrides (base theme is in .streamlit/config.toml)
-st.markdown("""
+# Dashboard sections use a "terminal noir" treatment: amber accent, Sora + IBM Plex Sans.
+st.markdown(
+    """
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Sora:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
     .stButton>button:hover {
         background-color: #1565C0;
@@ -262,8 +291,237 @@ st.markdown("""
         border-radius: 10px;
         text-align: center;
     }
+    @keyframes gftDashReveal {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .gft-dash-page-tagline {
+        font-family: 'IBM Plex Sans', sans-serif;
+        font-size: 0.82rem;
+        color: #94a3b8;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin: -0.5rem 0 1rem 0;
+        padding-bottom: 0.25rem;
+        border-bottom: 1px solid rgba(232, 168, 56, 0.2);
+        max-width: 28rem;
+    }
+    .gft-dash-section {
+        animation: gftDashReveal 0.55s ease-out;
+        margin: 1.1rem 0 0.65rem 0;
+        padding: 1rem 1.2rem 1.1rem 1.2rem;
+        background:
+            radial-gradient(ellipse 120% 80% at 0% 0%, rgba(232, 168, 56, 0.09), transparent 55%),
+            linear-gradient(180deg, rgba(38, 39, 48, 0.55), rgba(14, 17, 23, 0.15));
+        border: 1px solid rgba(232, 168, 56, 0.14);
+        border-radius: 6px;
+        box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset;
+    }
+    .gft-dash-kicker {
+        font-family: 'Sora', sans-serif;
+        font-size: 0.65rem;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: #e8a838;
+        font-weight: 600;
+        display: block;
+        margin-bottom: 0.3rem;
+    }
+    .gft-dash-title {
+        font-family: 'Sora', sans-serif;
+        font-size: 1.28rem;
+        font-weight: 700;
+        color: #f8fafc;
+        margin: 0;
+        letter-spacing: -0.03em;
+        line-height: 1.2;
+    }
+    .gft-dash-sub {
+        font-family: 'IBM Plex Sans', sans-serif;
+        font-size: 0.78rem;
+        color: #94a3b8;
+        margin: 0.45rem 0 0 0;
+        line-height: 1.5;
+    }
+    .gft-fred-subhead {
+        font-family: 'Sora', sans-serif;
+        font-size: 0.75rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #cbd5e1;
+        margin: 1rem 0 0.4rem 0;
+    }
+    .gft-fred-hint {
+        font-family: 'IBM Plex Sans', sans-serif;
+        font-size: 0.78rem;
+        color: #64748b;
+        margin: 0.35rem 0 0 0;
+    }
+    .gft-news-hero-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 0.75rem;
+        margin: 0.5rem 0 1rem 0;
+    }
+    .gft-news-card {
+        font-family: 'IBM Plex Sans', sans-serif;
+        background: linear-gradient(155deg, rgba(38,39,48,0.92) 0%, rgba(18, 20, 28, 0.88) 100%);
+        border: 1px solid rgba(232, 168, 56, 0.12);
+        border-radius: 8px;
+        padding: 0.9rem 1rem 0.85rem 1rem;
+        position: relative;
+        overflow: hidden;
+    }
+    .gft-news-card::before {
+        content: "";
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 3px;
+        background: linear-gradient(90deg, #e8a838, rgba(45, 212, 191, 0.6), transparent);
+        opacity: 0.95;
+    }
+    .gft-news-card-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.45rem;
+        flex-wrap: wrap;
+    }
+    .gft-news-score {
+        font-family: 'Sora', sans-serif;
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: #0f172a;
+        background: #e8a838;
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+    }
+    .gft-news-time {
+        font-size: 0.68rem;
+        color: #64748b;
+    }
+    .gft-news-tickers {
+        font-size: 0.65rem;
+        color: #2dd4bf;
+        letter-spacing: 0.04em;
+    }
+    .gft-news-headline {
+        font-size: 0.88rem;
+        font-weight: 500;
+        color: #e2e8f0;
+        line-height: 1.35;
+        margin: 0 0 0.5rem 0;
+    }
+    .gft-news-card a {
+        font-size: 0.72rem;
+        color: #e8a838;
+        text-decoration: none;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+    }
+    .gft-news-card a:hover {
+        color: #fbbf24;
+        text-decoration: underline;
+    }
+    .gft-alert-panel {
+        margin: 0.5rem 0 1rem 0;
+    }
+    .gft-alert-banner {
+        font-family: 'Sora', sans-serif;
+        font-size: 0.78rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #fecaca;
+        background: linear-gradient(105deg, rgba(248, 113, 113, 0.18), rgba(232, 168, 56, 0.06));
+        border-left: 3px solid #f87171;
+        padding: 0.65rem 1rem;
+        border-radius: 4px;
+        margin-bottom: 0.65rem;
+    }
+    .gft-alert-card {
+        font-family: 'IBM Plex Sans', sans-serif;
+        background: linear-gradient(180deg, rgba(38, 39, 48, 0.9), rgba(22, 24, 32, 0.85));
+        border: 1px solid rgba(248, 113, 113, 0.22);
+        border-radius: 6px;
+        padding: 0.65rem 0.9rem;
+        margin-bottom: 0.45rem;
+        font-size: 0.84rem;
+        color: #e2e8f0;
+        line-height: 1.45;
+    }
+    .gft-empty-state {
+        font-family: 'IBM Plex Sans', sans-serif;
+        border: 1px dashed rgba(232, 168, 56, 0.28);
+        background: radial-gradient(ellipse 80% 60% at 0% 0%, rgba(232, 168, 56, 0.06), transparent),
+                    rgba(38, 39, 48, 0.35);
+        color: #94a3b8;
+        padding: 1.2rem 1.4rem;
+        border-radius: 8px;
+        margin: 0.75rem 0;
+        font-size: 0.88rem;
+        line-height: 1.5;
+    }
+    .gft-cache-hint {
+        font-family: 'IBM Plex Sans', sans-serif;
+        font-size: 0.74rem;
+        color: #64748b;
+        margin-top: 0.6rem;
+        letter-spacing: 0.02em;
+    }
+    .gft-dash-msg {
+        font-family: 'IBM Plex Sans', sans-serif;
+        border-radius: 8px;
+        padding: 0.9rem 1.1rem;
+        margin: 0.65rem 0;
+        font-size: 0.88rem;
+        line-height: 1.45;
+    }
+    .gft-dash-msg-title {
+        font-family: 'Sora', sans-serif;
+        font-size: 0.68rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin-bottom: 0.35rem;
+        font-weight: 600;
+    }
+    .gft-dash-msg-body {
+        color: #cbd5e1;
+        word-break: break-word;
+    }
+    .gft-dash-msg-error {
+        border: 1px solid rgba(248, 113, 113, 0.45);
+        background: linear-gradient(135deg, rgba(248, 113, 113, 0.14), rgba(38, 39, 48, 0.65));
+    }
+    .gft-dash-msg-error .gft-dash-msg-title { color: #fecaca; }
+    .gft-dash-msg-warning {
+        border: 1px solid rgba(232, 168, 56, 0.42);
+        background: linear-gradient(135deg, rgba(232, 168, 56, 0.11), rgba(38, 39, 48, 0.55));
+    }
+    .gft-dash-msg-warning .gft-dash-msg-title { color: #fbbf24; }
+    .gft-dash-msg-info {
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        background: rgba(38, 39, 48, 0.48);
+    }
+    .gft-dash-msg-info .gft-dash-msg-title { color: #94a3b8; }
     </style>
-    """, unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
+
+# Cohesive accent palette for dashboard Plotly charts (sector pie, etc.)
+GFT_DASH_CHART_PALETTE = [
+    "#e8a838",
+    "#2dd4bf",
+    "#c45c3e",
+    "#818cf8",
+    "#c084fc",
+    "#4ade80",
+    "#f472b6",
+    "#38bdf8",
+    "#fbbf24",
+    "#fb7185",
+]
 
 
 def initialize_database():
@@ -293,108 +551,469 @@ def format_percentage(value) -> str:
     return f"{float(value):+.2f}%"
 
 
+def _gft_metrics_container():
+    """Borders metric rows on Streamlit >= 1.29; plain container otherwise."""
+    try:
+        return st.container(border=True)
+    except TypeError:
+        return st.container()
+
+
+def _gft_dash_callout(kind: str, title: str, body: str) -> None:
+    """Terminal-styled error / warning / info (Dashboard)."""
+    if kind not in ("error", "warning", "info"):
+        kind = "info"
+    cls = f"gft-dash-msg gft-dash-msg-{kind}"
+    st.markdown(
+        f'<div class="{cls}"><div class="gft-dash-msg-title">{html.escape(title)}</div>'
+        f'<div class="gft-dash-msg-body">{html.escape(body)}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _gft_dash_section_header(kicker: str, title: str, subtitle: Optional[str] = None) -> None:
+    sub_html = (
+        f'<p class="gft-dash-sub">{html.escape(subtitle)}</p>'
+        if subtitle
+        else ""
+    )
+    st.markdown(
+        f'<div class="gft-dash-section">'
+        f'<span class="gft-dash-kicker">{html.escape(kicker)}</span>'
+        f'<h2 class="gft-dash-title">{html.escape(title)}</h2>'
+        f"{sub_html}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _trim_macro_note_column(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "Note" not in df.columns:
+        return df
+    col = df["Note"].astype(str).str.strip()
+    if col.eq("").all() or col.eq("nan").all():
+        return df.drop(columns=["Note"])
+    return df
+
+
+def _style_macro_movers_styler(df: pd.DataFrame):
+    df = _trim_macro_note_column(df.copy())
+
+    def _pct_colors(series: pd.Series):
+        styles = []
+        for v in series:
+            if pd.isna(v) or not isinstance(v, (int, float)):
+                styles.append("")
+            elif v > 0:
+                styles.append("color: #2dd4bf; font-weight: 600")
+            elif v < 0:
+                styles.append("color: #f87171; font-weight: 600")
+            else:
+                styles.append("")
+        return styles
+
+    styler = df.style
+    if "Change %" in df.columns:
+        styler = styler.apply(_pct_colors, subset=["Change %"])
+    fmt: dict = {}
+    if "Last" in df.columns:
+        fmt["Last"] = "{:.2f}"
+    if "Prev close" in df.columns:
+        fmt["Prev close"] = "{:.2f}"
+    if "Change %" in df.columns:
+        fmt["Change %"] = "{:+.2f}%"
+    if fmt:
+        styler = styler.format(fmt, na_rep="—")
+    return styler
+
+
+def _style_fred_rates_styler(df: pd.DataFrame):
+    if df.empty:
+        return df
+    styler = df.style
+    fmt = {}
+    if "Value" in df.columns:
+        fmt["Value"] = "{:.3f}"
+    if fmt:
+        styler = styler.format(fmt, na_rep="—")
+    return styler
+
+
+def _gft_render_news_hero_cards(ranked: list, limit: int = 3) -> None:
+    """Top stories as compact cards (RankedNewsItem list)."""
+    if not ranked:
+        return
+    parts: list[str] = ['<div class="gft-news-hero-row">']
+    for item in ranked[:limit]:
+        ts = item.datetime.strftime("%Y-%m-%d %H:%M") if item.datetime else "—"
+        tickers = html.escape(", ".join(item.tickers_matched[:6]))
+        if len(item.tickers_matched) > 6:
+            tickers += "…"
+        head = html.escape(item.headline[:180] + ("…" if len(item.headline) > 180 else ""))
+        link = html.escape(item.url) if item.url else ""
+        link_html = (
+            f'<a href="{link}" target="_blank" rel="noopener noreferrer">Open article ↗</a>'
+            if link
+            else '<span style="color:#64748b;font-size:0.72rem;">No link</span>'
+        )
+        parts.append(
+            '<div class="gft-news-card">'
+            '<div class="gft-news-card-meta">'
+            f'<span class="gft-news-score">SCORE {item.score}</span>'
+            f'<span class="gft-news-time">{html.escape(ts)}</span>'
+            "</div>"
+            f'<div class="gft-news-tickers">{tickers}</div>'
+            f'<p class="gft-news-headline">{head}</p>'
+            f"{link_html}"
+            "</div>"
+        )
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
+def _gft_render_urgent_tax_alerts(lots: list, format_currency_fn) -> None:
+    """Styled alert strip for lots nearing long-term status (dicts from cached portfolio)."""
+    if not lots:
+        return
+    n = len(lots)
+    parts: list[str] = [
+        '<div class="gft-alert-panel">',
+        '<div class="gft-alert-banner">'
+        f"Alerts · {n} tax lot(s) nearing long-term status"
+        "</div>",
+    ]
+    for lot in lots:
+        t = html.escape(str(lot.get("ticker", "")))
+        shares = float(lot.get("shares") or 0)
+        pd = html.escape(str(lot.get("purchase_date", "")))
+        days = lot.get("days_until_long_term", "")
+        cb = format_currency_fn(lot.get("cost_basis", 0))
+        cb_e = html.escape(cb)
+        parts.append(
+            '<div class="gft-alert-card">'
+            f'<strong style="color:#e8a838">{t}</strong>'
+            f" · {shares:.4f} sh · purchase {pd} · "
+            f'<span style="color:#fbbf24;font-weight:600">{html.escape(str(days))}d</span> to LTC'
+            f" · basis {cb_e}"
+            "</div>"
+        )
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
 def dashboard_page():
     """Display the main dashboard page with portfolio overview."""
     st.title("📊 Dashboard")
-    
+    st.markdown(
+        '<p class="gft-dash-page-tagline">Tape · book · tax · flow</p>',
+        unsafe_allow_html=True,
+    )
+
     # Add refresh button
     col_refresh, col_spacer = st.columns([1, 5])
     with col_refresh:
         if st.button("🔄 Refresh Prices"):
             get_portfolio_data.clear()
+            _cached_macro_context.clear()
+            _cached_portfolio_insights.clear()
+            _cached_relevant_news.clear()
             st.rerun()
-    
+
+    _gft_dash_section_header(
+        "Context · GMM / BTMM",
+        "Macro snapshot",
+        "Cross-asset movers (Yahoo Finance, delayed). Treasury & Fed via FRED when FRED_API_KEY is set. "
+        "Not a Bloomberg terminal—same job: know the tape before you read the story.",
+    )
+    try:
+        _macro = _cached_macro_context()
+        _m_df, _r_df = macro_context_to_dataframes(_macro)
+        if _m_df.empty:
+            st.markdown(
+                '<div class="gft-empty-state">No macro rows returned. Check your network connection '
+                "and Yahoo Finance availability.</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.dataframe(
+                _style_macro_movers_styler(_m_df),
+                use_container_width=True,
+                hide_index=True,
+            )
+        if _macro.fred_configured and not _r_df.empty:
+            st.markdown(
+                '<p class="gft-fred-subhead">Rates · FRED</p>',
+                unsafe_allow_html=True,
+            )
+            st.dataframe(
+                _style_fred_rates_styler(_r_df),
+                use_container_width=True,
+                hide_index=True,
+            )
+        elif not _macro.fred_configured:
+            st.markdown(
+                '<p class="gft-fred-hint">Set <strong>FRED_API_KEY</strong> in <code>.env</code> for Treasury & Fed snapshot.</p>',
+                unsafe_allow_html=True,
+            )
+    except Exception as e:
+        _gft_dash_callout(
+            "warning",
+            "Macro snapshot unavailable",
+            str(e),
+        )
+
     st.markdown("---")
-    
+
     try:
         # Use cached portfolio data to avoid rate limits
         summary = get_portfolio_data()
-        
+
         if summary is None:
-            st.error("Error loading portfolio data. Please try again.")
+            _gft_dash_callout(
+                "error",
+                "Portfolio data",
+                "Could not load portfolio summary. Check the database connection and try Refresh.",
+            )
             return
-        
-        # Key metrics row
-        st.subheader("Portfolio Overview")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric(
-                "Total Positions",
-                len(summary['positions']),
-                help="Number of unique stocks held"
+
+        _gft_dash_section_header(
+            "Book · Summary",
+            "Portfolio overview",
+            "Live weights and P/L from cached quotes (15 min TTL). Refresh updates macro, risk, news, and prices together.",
+        )
+        with _gft_metrics_container():
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric(
+                    "Total Positions",
+                    len(summary["positions"]),
+                    help="Number of unique stocks held",
+                )
+            with col2:
+                st.metric(
+                    "Portfolio Value",
+                    format_currency(summary["total_value"]),
+                    help="Current market value of all holdings",
+                )
+            with col3:
+                delta_color = "normal" if summary["total_unrealized_gain"] >= 0 else "inverse"
+                st.metric(
+                    "Unrealized Gain/Loss",
+                    format_currency(summary["total_unrealized_gain"]),
+                    format_percentage(summary["total_unrealized_gain_pct"]),
+                    delta_color=delta_color,
+                )
+            with col4:
+                st.metric(
+                    "Cost Basis",
+                    format_currency(summary["total_cost_basis"]),
+                    help="Total amount invested",
+                )
+
+        positions_key = tuple(
+            sorted(
+                (p["ticker"], round(float(p["current_value"]), 2))
+                for p in summary["positions"]
             )
-        
-        with col2:
-            st.metric(
-                "Portfolio Value",
-                format_currency(summary['total_value']),
-                help="Current market value of all holdings"
-            )
-        
-        with col3:
-            delta_color = "normal" if summary['total_unrealized_gain'] >= 0 else "inverse"
-            st.metric(
-                "Unrealized Gain/Loss",
-                format_currency(summary['total_unrealized_gain']),
-                format_percentage(summary['total_unrealized_gain_pct']),
-                delta_color=delta_color
-            )
-        
-        with col4:
-            st.metric(
-                "Cost Basis",
-                format_currency(summary['total_cost_basis']),
-                help="Total amount invested"
-            )
-        
-        st.markdown("---")
-        
-        # Tax summary row
-        st.subheader("Tax Liability Summary")
-        tax_col1, tax_col2, tax_col3 = st.columns(3)
-        
-        with tax_col1:
-            st.metric(
-                "Short-Term Gains",
-                format_currency(summary['short_term_gain']),
-                help="Gains on positions held ≤ 365 days (taxed as ordinary income)"
-            )
-        
-        with tax_col2:
-            st.metric(
-                "Long-Term Gains",
-                format_currency(summary['long_term_gain']),
-                help="Gains on positions held > 365 days (preferential tax rates)"
-            )
-        
-        with tax_col3:
-            total_gain = summary['short_term_gain'] + summary['long_term_gain']
-            st.metric(
-                "Total Unrealized Gains",
-                format_currency(total_gain),
-                help="Combined short-term and long-term gains"
-            )
-        
-        # Urgent alerts
-        if summary['urgent_lots']:
+        )
+        if summary["positions"]:
             st.markdown("---")
-            st.subheader("⚠️ Urgent Tax Alerts")
-            st.warning(f"**{len(summary['urgent_lots'])} tax lot(s) approaching long-term status!**")
-            
-            for lot in summary['urgent_lots']:
-                st.markdown(f"""
-                🔔 **{lot['ticker']}**: {lot['shares']:.4f} shares purchased on {lot['purchase_date']} 
-                will become long-term in **{lot['days_until_long_term']} days** 
-                (Cost basis: {format_currency(lot['cost_basis'])})
-                """)
-        
+            _gft_dash_section_header(
+                "Research · PORT",
+                "Portfolio risk snapshot",
+                "Sector weights from cached profiles; value-weighted β vs SPY (~6mo overlap on daily returns). "
+                "Exposure view for a personal book—not a buy-side risk engine.",
+            )
+            try:
+                insights = _cached_portfolio_insights(positions_key)
+                if insights.data_warnings:
+                    st.caption("Notes: " + " ".join(insights.data_warnings[:8]))
+                with _gft_metrics_container():
+                    rc1, rc2, rc3, rc4 = st.columns(4)
+                    with rc1:
+                        st.metric("Top position %", f"{insights.top1_pct:.1f}%")
+                    with rc2:
+                        st.metric("Top 5 weight %", f"{insights.top5_pct:.1f}%")
+                    with rc3:
+                        st.metric("HHI (concentration)", f"{insights.herfindahl:.3f}")
+                    with rc4:
+                        beta_txt = (
+                            f"{insights.portfolio_beta:.2f}"
+                            if insights.portfolio_beta is not None
+                            else "—"
+                        )
+                        st.metric("Value-weighted β vs SPY", beta_txt)
+                if insights.sector_weights:
+                    sec_names = list(insights.sector_weights.keys())
+                    sec_vals = list(insights.sector_weights.values())
+                    n_sec = len(sec_names)
+                    pie_colors = (GFT_DASH_CHART_PALETTE * ((n_sec // len(GFT_DASH_CHART_PALETTE)) + 1))[
+                        :n_sec
+                    ]
+                    fig_sec = px.pie(
+                        values=sec_vals,
+                        names=sec_names,
+                        title="Allocation by sector (estimated)",
+                        color_discrete_sequence=pie_colors,
+                    )
+                    fig_sec.update_layout(
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        font_color="#e2e8f0",
+                        title_font_size=15,
+                        title_font_family="Sora",
+                        font_family="IBM Plex Sans",
+                        legend_font_size=11,
+                    )
+                    fig_sec.update_traces(
+                        textposition="inside",
+                        textinfo="percent+label",
+                        textfont_color="#0f172a",
+                        hovertemplate="%{label}: %{value:.1f}%<extra></extra>",
+                        marker=dict(line=dict(color="rgba(15,23,42,0.35)", width=1)),
+                    )
+                    st.plotly_chart(fig_sec, use_container_width=True)
+                if insights.per_ticker_beta:
+                    with st.expander("Per-ticker beta (vs SPY)"):
+                        beta_rows = [
+                            {
+                                "Ticker": t,
+                                "Beta": round(b, 3),
+                                "Weight in β": f"{insights.beta_weights_used.get(t, 0) * 100:.1f}%",
+                            }
+                            for t, b in sorted(
+                                insights.per_ticker_beta.items(),
+                                key=lambda x: -insights.beta_weights_used.get(x[0], 0),
+                            )
+                        ]
+                        st.dataframe(pd.DataFrame(beta_rows), use_container_width=True, hide_index=True)
+            except Exception as e:
+                _gft_dash_callout(
+                    "warning",
+                    "Portfolio risk snapshot unavailable",
+                    str(e),
+                )
+        else:
+            st.markdown(
+                '<div class="gft-empty-state">No positions yet — add trades to unlock sector exposure, '
+                "β vs SPY, and the risk metrics deck.</div>",
+                unsafe_allow_html=True,
+            )
+
         st.markdown("---")
+
+        _gft_dash_section_header(
+            "Tax · HIFO",
+            "Tax liability summary",
+            "Unrealized gains by character (short-term vs long-term) from open lots. Not tax advice.",
+        )
+        with _gft_metrics_container():
+            tax_col1, tax_col2, tax_col3 = st.columns(3)
+            with tax_col1:
+                st.metric(
+                    "Short-Term Gains",
+                    format_currency(summary["short_term_gain"]),
+                    help="Gains on positions held ≤ 365 days (taxed as ordinary income)",
+                )
+            with tax_col2:
+                st.metric(
+                    "Long-Term Gains",
+                    format_currency(summary["long_term_gain"]),
+                    help="Gains on positions held > 365 days (preferential tax rates)",
+                )
+            with tax_col3:
+                total_gain = summary["short_term_gain"] + summary["long_term_gain"]
+                st.metric(
+                    "Total Unrealized Gains",
+                    format_currency(total_gain),
+                    help="Combined short-term and long-term gains",
+                )
         
-        # Visualizations
-        if summary['positions']:
-            st.subheader("Portfolio Analytics")
-            
+        if summary["urgent_lots"]:
+            st.markdown("---")
+            _gft_render_urgent_tax_alerts(summary["urgent_lots"], format_currency)
+
+        st.markdown("---")
+        _gft_dash_section_header(
+            "Flow · TOP",
+            "Headlines for your book",
+            "Merged feed for portfolio + watchlist, ranked with transparent heuristics (mentions, keywords). "
+            "Not Bloomberg TOP—same intent: less noise before you drill.",
+        )
+        try:
+            db_wl = get_db_session()
+            try:
+                wl_rows = db_wl.query(Watchlist.ticker).all()
+                watch_tuple = tuple(sorted((r[0] or "").upper().strip() for r in wl_rows if r[0]))
+            finally:
+                db_wl.close()
+            port_tuple = tuple(
+                sorted({(p["ticker"] or "").upper().strip() for p in summary["positions"] if p.get("ticker")})
+            )
+            if not port_tuple and not watch_tuple:
+                st.markdown(
+                    '<div class="gft-empty-state">Add portfolio positions or watchlist tickers on '
+                    "<strong>Market Analysis</strong> to populate this feed.</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                ranked = _cached_relevant_news(port_tuple, watch_tuple)
+                if not ranked:
+                    st.markdown(
+                        '<div class="gft-empty-state">No headlines returned. Configure <strong>FINNHUB_API_KEY</strong> '
+                        "or OpenBB for company news.</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    _gft_render_news_hero_cards(ranked, limit=3)
+                    st.caption("Full feed")
+                    news_rows = []
+                    for item in ranked[:50]:
+                        ts = item.datetime.strftime("%Y-%m-%d %H:%M") if item.datetime else ""
+                        news_rows.append(
+                            {
+                                "Score": item.score,
+                                "Time": ts,
+                                "Tickers": ", ".join(item.tickers_matched),
+                                "Headline": item.headline,
+                                "Source": item.source,
+                                "Link": item.url or None,
+                            }
+                        )
+                    news_df = pd.DataFrame(news_rows)
+                    st.dataframe(
+                        news_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Link": st.column_config.LinkColumn(
+                                "Article",
+                                help="Open in browser",
+                                display_text="Open ↗",
+                            ),
+                            "Headline": st.column_config.TextColumn(
+                                "Headline",
+                                width="large",
+                            ),
+                            "Score": st.column_config.NumberColumn("Score", format="%d"),
+                        },
+                    )
+        except Exception as e:
+            _gft_dash_callout(
+                "warning",
+                "Headlines unavailable",
+                str(e),
+            )
+
+        st.markdown("---")
+
+        if summary["positions"]:
+            _gft_dash_section_header(
+                "Analytics · Allocation",
+                "Portfolio analytics",
+                "Ticker weights vs tax-status P/L. Same palette as sector view above for a single visual language.",
+            )
+
             viz_col1, viz_col2 = st.columns(2)
             
             with viz_col1:
@@ -413,22 +1032,29 @@ def dashboard_page():
                     chart_names = [p['ticker'] for p in sorted_positions]
                     chart_values = [p['current_value'] for p in sorted_positions]
 
+                n_t = len(chart_names)
+                pie_colors_t = (GFT_DASH_CHART_PALETTE * ((n_t // len(GFT_DASH_CHART_PALETTE)) + 1))[:n_t]
                 fig_pie = px.pie(
                     values=chart_values,
                     names=chart_names,
                     title="Portfolio Allocation by Ticker",
-                    color_discrete_sequence=px.colors.qualitative.Set2,
+                    color_discrete_sequence=pie_colors_t,
                 )
                 fig_pie.update_layout(
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    font_color='white',
-                    title_font_size=16,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font_color="#e2e8f0",
+                    title_font_size=15,
+                    title_font_family="Sora",
+                    font_family="IBM Plex Sans",
+                    legend_font_size=11,
                 )
                 fig_pie.update_traces(
-                    textposition='inside',
-                    textinfo='percent+label',
-                    hovertemplate='%{label}: %{value:$,.2f} (%{percent})<extra></extra>',
+                    textposition="inside",
+                    textinfo="percent+label",
+                    textfont_color="#0f172a",
+                    hovertemplate="%{label}: %{value:$,.2f} (%{percent})<extra></extra>",
+                    marker=dict(line=dict(color="rgba(15,23,42,0.35)", width=1)),
                 )
                 st.plotly_chart(fig_pie, use_container_width=True)
                 if len(sorted_positions) > MAX_SLICES:
@@ -444,32 +1070,39 @@ def dashboard_page():
                     'Gain/Loss': [summary['short_term_gain'], summary['long_term_gain']]
                 }
                 
-                colors = ['#FF6B6B' if g < 0 else '#4ECDC4' for g in gains_data['Gain/Loss']]
-                
-                fig_bar = go.Figure(data=[
-                    go.Bar(
-                        x=gains_data['Tax Status'],
-                        y=gains_data['Gain/Loss'],
-                        marker_color=colors,
-                        text=[format_currency(g) for g in gains_data['Gain/Loss']],
-                        textposition='outside'
-                    )
-                ])
+                colors = ["#f87171" if g < 0 else "#2dd4bf" for g in gains_data["Gain/Loss"]]
+
+                fig_bar = go.Figure(
+                    data=[
+                        go.Bar(
+                            x=gains_data["Tax Status"],
+                            y=gains_data["Gain/Loss"],
+                            marker_color=colors,
+                            text=[format_currency(g) for g in gains_data["Gain/Loss"]],
+                            textposition="outside",
+                        )
+                    ]
+                )
                 fig_bar.update_layout(
                     title="Gains by Tax Status",
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    font_color='white',
-                    title_font_size=16,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font_color="#e2e8f0",
+                    title_font_size=15,
+                    title_font_family="Sora",
+                    font_family="IBM Plex Sans",
                     yaxis_title="Gain/Loss ($)",
-                    showlegend=False
+                    showlegend=False,
                 )
                 st.plotly_chart(fig_bar, use_container_width=True)
             
-            # Positions table
             st.markdown("---")
-            st.subheader("Position Details")
-            
+            _gft_dash_section_header(
+                "Ledger · Positions",
+                "Position details",
+                "Per-name lots, cost, and mark. Gain columns use terminal colors (teal / rose).",
+            )
+
             positions_rows = []
             for p in summary['positions']:
                 avg_cost = p['total_cost_basis'] / p['total_shares'] if p['total_shares'] else 0
@@ -502,23 +1135,37 @@ def dashboard_page():
                     "ST Shares": "{:,.4f}",
                     "LT Shares": "{:,.4f}",
                 }).map(
-                    lambda v: "color: #4ECDC4" if isinstance(v, (int, float)) and v > 0
-                              else "color: #FF6B6B" if isinstance(v, (int, float)) and v < 0
-                              else "",
+                    lambda v: "color: #2dd4bf" if isinstance(v, (int, float)) and v > 0
+                    else "color: #f87171" if isinstance(v, (int, float)) and v < 0
+                    else "",
                     subset=["Gain/Loss", "Gain %"],
                 ),
                 use_container_width=True,
                 hide_index=True,
             )
             
-            # Cache notice
-            st.caption("💡 Prices are cached for 15 minutes to avoid rate limits. Click 'Refresh Prices' to update.")
+            st.markdown(
+                '<p class="gft-cache-hint">Quotes refresh every 15 minutes by cache — use <strong>Refresh Prices</strong> to pull latest.</p>',
+                unsafe_allow_html=True,
+            )
         else:
-            st.info("No positions found. Add trades in the 'Portfolio & Taxes' page to see your portfolio summary.")
+            st.markdown(
+                '<div class="gft-empty-state">No open positions yet. Add trades on <strong>Portfolio & Taxes</strong> '
+                "to populate overview, risk, analytics, and the position grid.</div>",
+                unsafe_allow_html=True,
+            )
             
     except Exception as e:
-        st.error(f"Error loading dashboard: {str(e)}")
-        st.info("Make sure your database is properly configured.")
+        _gft_dash_callout(
+            "error",
+            "Dashboard load failed",
+            str(e),
+        )
+        _gft_dash_callout(
+            "info",
+            "Checklist",
+            "Confirm PostgreSQL is running, .env DB_* variables are correct, and tables initialize on first connect.",
+        )
 
 
 def portfolio_taxes_page():

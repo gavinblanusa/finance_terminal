@@ -49,6 +49,9 @@ streamlit run app/main.py
 | `app/models.py` | SQLAlchemy models: Trades, Watchlist, IPO_Registry, ValuationHistory, CompanyProfile, CompanyFundamentals |
 | `app/db.py` | PostgreSQL connection and session management |
 | `app/tax_engine.py` | HIFO tax lot tracking, gain calculations, CSV import |
+| `app/macro_context.py` | Dashboard macro strip: cross-asset movers (yfinance), optional FRED rates |
+| `app/portfolio_insights.py` | Dashboard PORT-lite: sector weights, concentration, value-weighted beta vs SPY |
+| `app/relevant_news.py` | Dashboard ranked headlines across portfolio + watchlist |
 | `app/market_data.py` | OHLCV cache, valuation (P/E, revenue), TradingView-style signals, company profile/fundamentals/news |
 | `app/openbb_adapter.py` | OpenBB data layer (OHLCV, quote, profile, fundamentals, news) |
 | `app/financetoolkit_adapter.py` | FinanceToolkit layer (fundamentals, optional current P/E and PEG) |
@@ -70,6 +73,9 @@ streamlit run app/main.py
 ## Features
 
 ### Dashboard
+- **Macro snapshot**: major indices, VIX, FX, gold/crude (Yahoo Finance); optional Treasury / Fed rates via [FRED](https://fred.stlouisfed.org/) when `FRED_API_KEY` is set
+- **Portfolio risk snapshot**: sector allocation (from cached profiles), top-1 / top-5 / HHI concentration, value-weighted beta vs SPY (daily returns, ~6-month overlap)
+- **Headlines for your book**: merged company news for portfolio + watchlist tickers, relevance-ranked (heuristic scoring)
 - Portfolio value and metrics overview
 - Unrealized gains/losses with real-time prices (via yfinance)
 - Tax liability summary (Short-Term vs Long-Term gains)
@@ -135,6 +141,7 @@ This section gives future AIs and refactors enough context to navigate the codeb
 | Concern | Primary location | Notes |
 |--------|-------------------|--------|
 | Portfolio aggregation, tax summary | `tax_engine.py` (`TaxEngine`, `get_portfolio_summary`) | Reads `Trades` from DB via session passed in |
+| Dashboard macro strip, PORT-lite, ranked news | `macro_context.py`, `portfolio_insights.py`, `relevant_news.py`, `main.py` (`_cached_*`) | Movers: yfinance; rates: FRED if key set; sectors/profiles: `get_company_profile`; beta: `fetch_ohlcv` + SPY; news: `fetch_company_news` per ticker |
 | Trade CRUD, lots, CSV import | `main.py` (portfolio_taxes_page) + `tax_engine.py` (HIFO, `import_trades_from_csv`) | Trades stored in `models.Trades` |
 | OHLCV fetch, cache, indicators | `market_data.py` (`fetch_ohlcv`, …), `openbb_adapter.py` | OpenBB first, then yfinance, then `api_clients`; file cache `.market_cache/` |
 | Valuation (P/E, revenue) | `market_data.py` (`fetch_valuation_data`, …) | DB table `valuation_history`; also Alpha Vantage / Finnhub / FMP |
@@ -162,6 +169,7 @@ Load from `.env` in project root. Used by:
 | `USE_FINANCETOOLKIT` | `financetoolkit_adapter.py` | Set to `false` to disable FinanceToolkit for fundamentals and current P/E/PEG; app falls back to OpenBB then FMP (default: enabled) |
 | `PEERS_COUNTRY` | `market_data.py` | Optional. Restrict competitor screener to country (e.g. `US`). |
 | `PEERS_EXCHANGE` | `market_data.py` | Optional. Restrict competitor screener to exchange (e.g. `NASDAQ,NYSE`). |
+| `FRED_API_KEY` | `macro_context.py` | Optional. Enables Dashboard rates panel (DGS10, DGS2, 3M bill, EFFR, 10Y–2Y). [Get a key](https://fred.stlouisfed.org/docs/api/api_key.html) (free). |
 
 **OpenBB:** The app uses OpenBB as the primary data layer when available (OHLCV, quote, profile, fundamentals, news, IPO prices). Ensure `.env` is loaded before the first OpenBB use (the adapter loads it when imported). After installing or removing OpenBB provider extensions, run `openbb-build` to refresh the Python interface.
 

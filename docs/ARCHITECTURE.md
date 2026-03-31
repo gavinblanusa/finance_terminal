@@ -10,7 +10,7 @@ For AIs and refactors: this doc explains how data moves through the app and how 
 
 | Page | app/main.py functions | Modules used | Persistence |
 |------|-------------------|--------------|-------------|
-| **Dashboard** | `dashboard_page()` | `db`, `models` (Trades), `tax_engine` (TaxEngine, portfolio summary, prices) | PostgreSQL (trades) |
+| **Dashboard** | `dashboard_page()` | `db`, `models` (Trades, Watchlist), `tax_engine`, `macro_context`, `portfolio_insights`, `relevant_news`, `market_data` (`get_company_profile`, `fetch_ohlcv`, `fetch_company_news`) | PostgreSQL (trades, watchlist); Streamlit `@st.cache_data` (15m macro/insights, 10m news); `.market_cache/` via OHLCV |
 | **Portfolio & Taxes** | `portfolio_taxes_page()` | `db`, `models` (Trades), `tax_engine` (CRUD, HIFO, CSV import, prices) | PostgreSQL (trades) |
 | **Market Analysis** | `market_analysis_page()` | `market_data` (OHLCV, valuation, signals, profile, fundamentals, news, competitors); `market_data` may call `api_clients` | `.market_cache/` (file); `valuation_history`, `peer_overrides` (DB) |
 | **IPO Vintage Tracker** | `ipo_tracker_page()` | `ipo_service`, `db`, `models` (IPO_Registry) | `.ipo_cache/` (file); PostgreSQL (ipo_registry) |
@@ -29,6 +29,13 @@ For AIs and refactors: this doc explains how data moves through the app and how 
 4. **CSV import**: `tax_engine.import_trades_from_csv` + column mapping in UI → inserts into `Trades` via the same session.
 
 Refactor note: Changing how lots are computed (e.g. LIFO) means changing `TaxEngine` in `tax_engine.py` only; trade storage stays the same.
+
+### Dashboard (macro, PORT-lite, ranked news)
+
+1. **Macro snapshot** (`macro_context.build_macro_context`): Per-symbol **yfinance** daily history (~15d) for indices, VIX, FX, DXY, gold, crude; last vs prior close → **Change %**. Optional **FRED** `series/observations` (latest point) for `DGS10`, `DGS2`, `DGS3MO`, `EFFR`, `T10Y2Y` when `FRED_API_KEY` is set. Cached in `main.py` as `_cached_macro_context` (TTL 900s). **Refresh Prices** clears this cache.
+2. **Portfolio risk snapshot** (`portfolio_insights.build_portfolio_insights`): Input is cached portfolio positions from `get_portfolio_data`. **Sector weights**: `market_data.get_company_profile` per ticker (DB-first `CompanyProfile`). **Concentration**: top-1 / top-5 % of value, Herfindahl on weights. **Beta**: `fetch_ohlcv(ticker, 2)` and `SPY`, simple returns, aligned dates, min ~120 overlapping days; per-ticker β = Cov(rᵢ,rₘ)/Var(rₘ); portfolio β value-weighted over tickers with valid β (weights renormalized). Cached `_cached_portfolio_insights(positions_key)` (900s); cleared with Refresh.
+3. **Headlines for your book** (`relevant_news.build_relevant_news`): Universe = unique portfolio tickers + `Watchlist` (cap 25). Fetches `fetch_company_news` per symbol (OpenBB → Finnhub). Scores headlines (portfolio mention, watchlist, keyword list), dedupes by source+URL, sorts. Cached `_cached_relevant_news(port_tuple, watch_tuple)` (600s); cleared with Refresh.
+4. **Dashboard UI helpers** (`main.py`): `_gft_dash_callout` renders macro/risk/news/load failures as styled panels (error / warning / info). `_gft_metrics_container()` wraps metric rows in `st.container(border=True)` when Streamlit ≥ 1.29 (see `requirements.txt`). Empty macro DF and “no positions” paths use the same dashed **`.gft-empty-state`** treatment as headlines.
 
 ### Market Analysis
 
