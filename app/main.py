@@ -254,8 +254,16 @@ st.markdown(
     """
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Sora:wght@500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
+    /* Tabular figures for tape-style numbers (see DESIGN.md) */
+    .gft-tabular {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-variant-numeric: tabular-nums;
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .gft-dash-section { animation: none !important; }
+    }
     .stButton>button:hover {
         background-color: #1565C0;
     }
@@ -619,7 +627,12 @@ def _style_macro_movers_styler(df: pd.DataFrame):
                 styles.append("")
         return styles
 
-    styler = df.style
+    styler = df.style.set_properties(
+        **{
+            "font-family": "'JetBrains Mono', ui-monospace, monospace",
+            "font-variant-numeric": "tabular-nums",
+        }
+    )
     if "Change %" in df.columns:
         styler = styler.apply(_pct_colors, subset=["Change %"])
     fmt: dict = {}
@@ -637,7 +650,12 @@ def _style_macro_movers_styler(df: pd.DataFrame):
 def _style_fred_rates_styler(df: pd.DataFrame):
     if df.empty:
         return df
-    styler = df.style
+    styler = df.style.set_properties(
+        **{
+            "font-family": "'JetBrains Mono', ui-monospace, monospace",
+            "font-variant-numeric": "tabular-nums",
+        }
+    )
     fmt = {}
     if "Value" in df.columns:
         fmt["Value"] = "{:.3f}"
@@ -813,7 +831,16 @@ def dashboard_page():
         if not _fi_df.empty:
             if "Note" in _fi_df.columns and _fi_df["Note"].astype(str).str.strip().eq("").all():
                 _fi_df = _fi_df.drop(columns=["Note"])
-            st.dataframe(_fi_df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                _fi_df.style.set_properties(
+                    **{
+                        "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                        "font-variant-numeric": "tabular-nums",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
         if _fi_errs:
             st.caption("Notes: " + " ".join(_fi_errs[:3]))
     except Exception as e:
