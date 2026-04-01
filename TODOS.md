@@ -12,3 +12,8 @@ Backlog from OpenBB data-layer design (`~/.gstack/projects/gavinblanusa-finance_
 
 3. **Inventory drift guard (optional)**  
    **Done:** `scripts/verify_openbb_coverage_doc.py` (CI job `openbb-doc-registry`) ensures every multi-provider chain in `openbb_provider_registry.py` appears in `docs/OPENBB_COVERAGE.md`.
+
+## QA follow-ups (2026-04-01)
+
+- **Medium — console:** Streamlit 1.55 logs empty `theme.sidebar` widget/skeleton colors despite `[theme.sidebar]` in `.streamlit/config.toml`. See ISSUE-001 in `.gstack/qa-reports/qa-report-localhost-2026-04-01.md`.
+- **Medium — data:** Market Analysis / AAPL: Revenue (TTM) shows N/A while other fundamentals load (ISSUE-002).
