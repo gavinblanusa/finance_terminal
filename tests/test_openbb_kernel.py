@@ -176,6 +176,30 @@ def test_macro_skips_openbb_chain_without_fred_key(monkeypatch: pytest.MonkeyPat
     assert out is not None
 
 
+def test_merge_income_ttm_prefers_total_revenue_over_cost_of_revenue() -> None:
+    """Regression: first column containing 'revenue' must not be cost_of_revenue (QA AAPL TTM)."""
+    import openbb_adapter as oa
+
+    df = pd.DataFrame(
+        {
+            "cost_of_revenue": [50.0, 50.0, 50.0, 50.0],
+            "total_revenue": [100.0, 110.0, 120.0, 130.0],
+        }
+    )
+    result: dict = {}
+    oa._merge_income_ttm(result, df)
+    assert result.get("revenue_ttm") == pytest.approx(460.0)
+
+
+def test_merge_income_ttm_coerces_string_revenue() -> None:
+    import openbb_adapter as oa
+
+    df = pd.DataFrame({"total_revenue": ["100", "100", "100", "100"]})
+    result: dict = {}
+    oa._merge_income_ttm(result, df)
+    assert result.get("revenue_ttm") == pytest.approx(400.0)
+
+
 def test_macro_uses_openbb_when_fred_key_set(monkeypatch: pytest.MonkeyPatch) -> None:
     import openbb_adapter as oa
 

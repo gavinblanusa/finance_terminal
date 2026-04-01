@@ -296,19 +296,75 @@ def _merge_ratios_row(result: Dict[str, Any], df: Any) -> None:
             break
 
 
+def _normalize_income_column_name(name: Any) -> str:
+    return str(name).strip().lower().replace(" ", "_").replace("-", "_")
+
+
+# Order matters: pick total/operating revenue before a bare "revenue" column that might be ambiguous.
+_INCOME_REVENUE_COLUMN_ORDER: tuple[str, ...] = (
+    "total_revenue",
+    "totalrevenue",
+    "total_revenues",
+    "operating_revenue",
+    "operatingrevenue",
+    "operating_revenues",
+    "revenue",
+    "revenues",
+    "net_sales",
+    "netsales",
+    "sales",
+)
+
+
+def _is_bad_income_revenue_column(norm: str) -> bool:
+    """Columns whose name contains 'revenue' but are not quarterly total sales (e.g. COGS)."""
+    bad = (
+        "cost_of",
+        "costof",
+        "growth",
+        "per_share",
+        "pershare",
+        "estimate",
+        "margin",
+        "deferred",
+        "unearned",
+        "yield",
+        "cagr",
+        "ratio",
+    )
+    return any(b in norm for b in bad)
+
+
+def _pick_income_revenue_column(columns: Any) -> Optional[str]:
+    """Choose the income-statement column to sum for trailing-four-quarter revenue."""
+    col_list = [str(c) for c in columns]
+    norms = {c: _normalize_income_column_name(c) for c in col_list}
+    for target in _INCOME_REVENUE_COLUMN_ORDER:
+        for orig, norm in norms.items():
+            if norm != target or _is_bad_income_revenue_column(norm):
+                continue
+            return orig
+    for orig, norm in norms.items():
+        if "revenue" not in norm or _is_bad_income_revenue_column(norm):
+            continue
+        return orig
+    return None
+
+
 def _merge_income_ttm(result: Dict[str, Any], df: Any) -> None:
     if df is None or df.empty:
         return
-    rev_col = None
-    for c in df.columns:
-        if c and "revenue" in str(c).lower():
-            rev_col = c
-            break
+    import pandas as pd
+
+    rev_col = _pick_income_revenue_column(df.columns)
     if rev_col is None:
         return
-    total = df[rev_col].sum()
-    if total and total > 0:
-        result["revenue_ttm"] = float(total)
+    series = pd.to_numeric(df[rev_col], errors="coerce").dropna()
+    if series.empty:
+        return
+    total = float(series.sum())
+    if total > 0:
+        result["revenue_ttm"] = total
 
 
 def fetch_fundamentals_openbb(ticker: str) -> Optional[Dict[str, Any]]:
