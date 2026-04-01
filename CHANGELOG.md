@@ -2,13 +2,23 @@
 
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.3.1] - 2026-04-01
+
+### Fixed
+
+- **CI:** `test_macro_uses_openbb_when_fred_key_set` now patches `openbb_adapter.USE_OPENBB` so the `USE_OPENBB=false` matrix job matches import-time flag behavior (environment-only `monkeypatch` was not enough).
+
+### Changed
+
+- **Docs:** `docs/PROJECT_LEARNINGS.md` exports the gstack `/learn` snapshot; README, CLAUDE, AGENTS, architecture, and docs index call out **`docs/OPENBB_COVERAGE.md`** and project learnings.
+
 ## [0.1.3.0] - 2026-04-01
 
 ### Added
 
 - **OpenBB data layer:** shared fetch kernel (`openbb_fetch.py`) with provider chains, timeouts, and logging; `openbb_provider_registry.py` as the single provider order source; adapter routes for profile, fundamentals, news, macro (FRED when `FRED_API_KEY` is set, else pandas-datareader), IPO historical price, and more.
 - **CI:** GitHub Actions runs `pytest` with `USE_OPENBB=true` and `USE_OPENBB=false`, plus `verify_openbb_coverage_doc.py` so registry chains stay documented in `docs/OPENBB_COVERAGE.md`.
-- **Docs:** `docs/OPENBB_COVERAGE.md`, env and architecture updates; `TODOS.md` for backlog tracking.
+- **Docs:** **`docs/OPENBB_COVERAGE.md`** (what uses OpenBB and provider try-order), env and architecture updates, and **`TODOS.md`** for backlog tracking.
 
 ### Fixed
 

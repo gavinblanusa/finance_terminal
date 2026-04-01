@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Project pointers: **README.md** (setup, structure, API), **AGENTS.md** (Cursor Cloud / VM notes, **gstack `/learn` paths**), **docs/ARCHITECTURE.md** (page-to-module map), **CHANGELOG.md** / **VERSION** (releases).
+Project pointers: **README.md** (setup, structure, API), **AGENTS.md** (Cursor Cloud / VM notes, **gstack `/learn` paths**, CI/pytest), **docs/ARCHITECTURE.md** (page-to-module map), **docs/OPENBB_COVERAGE.md** (OpenBB inventory + provider order), **CHANGELOG.md** / **VERSION** (releases).
 
 ## Design system
 

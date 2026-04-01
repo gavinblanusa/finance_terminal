@@ -232,5 +232,6 @@ Load from `.env` in project root. Used by:
 - **`CHANGELOG.md`** / **`VERSION`** — What shipped in each release.
 - **`docs/README.md`** — Index of all docs and when to use them.
 - **`docs/ARCHITECTURE.md`** — Data flow, page→module map, and refactor notes.
+- **`docs/OPENBB_COVERAGE.md`** — OpenBB datasets, provider chains, and CI drift check vs the registry.
 - **`docs/MARKET_ANALYSIS_DATA_REFACTOR.md`** — Refactor plan for market analysis data (auto-save, DB/cache-first).
 
