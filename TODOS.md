@@ -15,5 +15,5 @@ Backlog from OpenBB data-layer design (`~/.gstack/projects/gavinblanusa-finance_
 
 ## QA follow-ups (2026-04-01)
 
-- **Medium — console:** Streamlit 1.55 logs empty `theme.sidebar` widget/skeleton colors despite `[theme.sidebar]` in `.streamlit/config.toml`. See ISSUE-001 in `.gstack/qa-reports/qa-report-localhost-2026-04-01.md`.
-- **Medium — data:** Market Analysis / AAPL: Revenue (TTM) shows N/A while other fundamentals load (ISSUE-002).
+- **Medium — console:** Streamlit 1.55 may still log empty `theme.sidebar` widget/skeleton colors in some setups. Tracked in local QA report under `.gstack/` (gitignored). No reliable `config.toml` fix found yet.
+- **Fixed in v0.1.3.0:** Revenue (TTM) on Market Analysis used the wrong income column when `cost_of_revenue` appeared before `total_revenue`; OpenBB income merge now picks an explicit revenue column order.

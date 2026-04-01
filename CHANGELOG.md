@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.3.0] - 2026-04-01
+
+### Added
+
+- **OpenBB data layer:** shared fetch kernel (`openbb_fetch.py`) with provider chains, timeouts, and logging; `openbb_provider_registry.py` as the single provider order source; adapter routes for profile, fundamentals, news, macro (FRED when `FRED_API_KEY` is set, else pandas-datareader), IPO historical price, and more.
+- **CI:** GitHub Actions runs `pytest` with `USE_OPENBB=true` and `USE_OPENBB=false`, plus `verify_openbb_coverage_doc.py` so registry chains stay documented in `docs/OPENBB_COVERAGE.md`.
+- **Docs:** `docs/OPENBB_COVERAGE.md`, env and architecture updates; `TODOS.md` for backlog tracking.
+
+### Fixed
+
+- **Market Analysis fundamentals:** **Revenue (TTM)** now sums the correct income-statement column (prefers `total_revenue`, ignores `cost_of_revenue` and other non-total lines that matched a naive `"revenue"` substring). Numeric strings from providers are coerced before summing.
+
 ## [0.1.2.0] - 2026-03-31
 
 ### Changed
