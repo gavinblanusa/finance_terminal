@@ -54,7 +54,9 @@ Refactor note: Changing how lots are computed (e.g. LIFO) means changing `TaxEng
 
 ### OpenBB adapter
 
-- **`openbb_adapter.py`**: Thin wrapper around OpenBB (ODP). Used by `market_data`, `tax_engine`, and `ipo_service`. Each function returns `None` on failure or when OpenBB is not installed so callers fall back to existing providers. Pattern: **OpenBB first, then fallback**. Env: `.env` loaded on adapter import; `POLYGON_API_KEY` set from `MASSIVE_API_KEY` if unset; `USE_OPENBB=false` disables OpenBB.
+- **`openbb_fetch.py`**: Lazy `obb`, `USE_OPENBB`, `POLYGON`/`MASSIVE` key mapping, `run_provider_chain()` with `OPENBB_REQUEST_TIMEOUT_SEC`, structured logging on logger **`gft.openbb`**.
+- **`openbb_provider_registry.py`**: `OPENBB_PROVIDER_CHAINS` (single source for try-order). CI checks `docs/OPENBB_COVERAGE.md` lists every multi-hop chain via `scripts/verify_openbb_coverage_doc.py`.
+- **`openbb_adapter.py`**: Normalizes OpenBB outputs to app shapes; uses the fetch kernel for provider chains (OHLCV, quote, profile, fundamentals, news, single-day historical, macro FRED). Used by `market_data`, `tax_engine`, and `ipo_service`. Returns `None` (or empty list for news) on failure so callers fall back. **Inventory:** `docs/OPENBB_COVERAGE.md`.
 - **`financetoolkit_adapter.py`**: FinanceToolkit wrapper for fundamentals (profitability ratios, revenue TTM) and optional current P/E and PEG. Used by `market_data.get_fundamentals_ratios()` and `fetch_valuation_data()`. Returns `None` on failure so callers fall back to OpenBB/FMP. Env: `USE_FINANCETOOLKIT=false` disables; `FMP_API_KEY` used by FinanceToolkit when set.
 
 Refactor note: See **MARKET_ANALYSIS_DATA_REFACTOR.md** for planned auto-save and tiered freshness (e.g. auto-save valuation and TV signals when data is freshly fetched).

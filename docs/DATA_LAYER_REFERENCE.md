@@ -272,7 +272,7 @@ curl -s -X POST http://127.0.0.1:8800/v1/analytics/tca \
 | `GFT_API_KEY` | Optional Bearer auth for `terminal_api` |
 | `GFT_CORS_ORIGINS` | `*` or comma-separated origins for FastAPI CORS |
 | `GFT_RATE_LIMIT` | slowapi limit (default `60/minute`; `0`/`off`/`none` ≈ disable) |
-| API keys for OpenBB / yfinance / Polygon / etc. | `market_data.fetch_ohlcv` and quotes (see README) |
+| API keys for OpenBB / yfinance / Polygon / etc. | `market_data.fetch_ohlcv`, `openbb_fetch`, quotes (see README); provider map in **`docs/OPENBB_COVERAGE.md`** |
 
 ---
 
