@@ -205,6 +205,8 @@ def test_macro_uses_openbb_when_fred_key_set(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setenv("FRED_API_KEY", "test-key")
     monkeypatch.setenv("USE_OPENBB", "true")
+    # openbb_adapter binds USE_OPENBB at import; env alone does not flip it (CI runs USE_OPENBB=false).
+    monkeypatch.setattr(oa, "USE_OPENBB", True)
     raw = MagicMock()
     raw.to_df = MagicMock(
         return_value=pd.DataFrame({"date": pd.to_datetime(["2021-06-01"]), "value": [4.5]})
