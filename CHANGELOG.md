@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.2.0] - 2026-03-31
+
+### Changed
+
+- **Partnerships tab** loads faster: **Refresh** reuses the saved SEC filing index unless you check **re-fetch SEC filing index**; **8-K** rows we already skip (not Item 1.01 or not financing) are remembered so we do not re-parse them.
+- **Market caps:** Yahoo pulls run in **parallel** with a **disk cache** (TTL); on first load you get signals quickly and **full cap enrich** runs when you pick a **cap band** filter or use **Load market caps** on **All**.
+
+### Added
+
+- **Tests:** `tests/test_edgar_partnership_defer.py`, `tests/test_partnership_enrichment.py`; more cases in `tests/test_edgar_service_partnerships.py`.
+
 ## [0.1.1.0] - 2026-03-31
 
 ### Added
