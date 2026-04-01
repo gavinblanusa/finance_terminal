@@ -77,7 +77,9 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/terminal_api.py` | FastAPI: `/v1/macro`, `/v1/fi`, `/v1/portfolio`, `/v1/analytics/dashboard` |
 | `app/relevant_news.py` | Dashboard ranked headlines across portfolio + watchlist |
 | `app/market_data.py` | OHLCV cache, valuation (P/E, revenue), TradingView-style signals, company profile/fundamentals/news |
-| `app/openbb_adapter.py` | OpenBB data layer (OHLCV, quote, profile, fundamentals, news) |
+| `app/openbb_fetch.py` | OpenBB fetch kernel: lazy `obb`, provider chain, timeouts, `gft.openbb` logging |
+| `app/openbb_provider_registry.py` | Provider try-order per dataset (`OPENBB_PROVIDER_CHAINS`); drift-checked vs `docs/OPENBB_COVERAGE.md` |
+| `app/openbb_adapter.py` | OpenBB data layer (normalization + fallbacks; uses `openbb_fetch`) |
 | `app/financetoolkit_adapter.py` | FinanceToolkit layer (fundamentals, optional current P/E and PEG) |
 | `app/api_clients.py` | Price/OHLCV APIs: Polygon, Twelve Data, EODHD (with rate limits) |
 | `app/ipo_service.py` | IPO calendar (Finnhub), vintage performance, price history |
@@ -199,17 +201,18 @@ Load from `.env` in project root. Used by:
 | `ALPHA_VANTAGE_API_KEY` or `ALPHA_API_KEY` | `market_data.py`, `tax_engine.py` | Valuation/earnings; price fallback |
 | `FMP_API_KEY` | `market_data.py`, `financetoolkit_adapter.py` | Company profile, fundamentals; FinanceToolkit uses it for ratio data when enabled |
 | `FINNHUB_API_KEY` | `market_data.py`, `ipo_service.py` | Earnings, news; IPO calendar |
-| `MASSIVE_API_KEY` | `market_data.py` (via `api_clients`), `openbb_adapter.py` | Polygon price/OHLCV (OpenBB uses `POLYGON_API_KEY`; adapter sets it from `MASSIVE_API_KEY` if unset) |
-| `POLYGON_API_KEY` | `openbb_adapter.py` | OpenBB Polygon provider (optional; if unset, adapter copies from `MASSIVE_API_KEY`) |
+| `MASSIVE_API_KEY` | `market_data.py` (via `api_clients`), `openbb_fetch.py` | Polygon price/OHLCV (OpenBB uses `POLYGON_API_KEY`; `openbb_fetch` copies from `MASSIVE_API_KEY` if unset) |
+| `POLYGON_API_KEY` | `openbb_fetch.py` | OpenBB Polygon provider (optional; if unset, copied from `MASSIVE_API_KEY`) |
+| `OPENBB_REQUEST_TIMEOUT_SEC` | `openbb_fetch.py` | Per-try timeout for OpenBB provider calls (default: 30) |
 | `TWELVEDATA_API_KEY` | `api_clients.py` | Price/OHLCV fallback |
 | `EODHD_API_KEY` | `api_clients.py` | Price/OHLCV fallback (e.g. 20/day) |
-| `USE_OPENBB` | `openbb_adapter.py` | Set to `false` to disable OpenBB and use only fallbacks (default: enabled) |
+| `USE_OPENBB` | `openbb_fetch.py` | Set to `false` to disable OpenBB and use only fallbacks (default: enabled) |
 | `USE_FINANCETOOLKIT` | `financetoolkit_adapter.py` | Set to `false` to disable FinanceToolkit for fundamentals and current P/E/PEG; app falls back to OpenBB then FMP (default: enabled) |
 | `PEERS_COUNTRY` | `market_data.py` | Optional. Restrict competitor screener to country (e.g. `US`). |
 | `PEERS_EXCHANGE` | `market_data.py` | Optional. Restrict competitor screener to exchange (e.g. `NASDAQ,NYSE`). |
-| `FRED_API_KEY` | `macro_context.py` | Optional. Enables Dashboard rates panel (DGS10, DGS2, 3M bill, EFFR, 10Y–2Y). [Get a key](https://fred.stlouisfed.org/docs/api/api_key.html) (free). |
+| `FRED_API_KEY` | `macro_context.py`, `openbb_adapter.fetch_macro_data_openbb` (via OpenBB when `USE_OPENBB=true`) | Optional. Enables Dashboard rates panel (DGS10, DGS2, 3M bill, EFFR, 10Y–2Y) and macro indicator series through OpenBB `fred_series` with pandas_datareader fallback. [Get a key](https://fred.stlouisfed.org/docs/api/api_key.html) (free). |
 
-**OpenBB:** The app uses OpenBB as the primary data layer when available (OHLCV, quote, profile, fundamentals, news, IPO prices). Ensure `.env` is loaded before the first OpenBB use (the adapter loads it when imported). After installing or removing OpenBB provider extensions, run `openbb-build` to refresh the Python interface.
+**OpenBB:** The app uses OpenBB as the primary data layer when available (OHLCV, quote, profile, fundamentals, news, IPO prices). `.env` is loaded when `openbb_fetch` is imported (via the adapter). Provider order, caches, and consumers are tracked in **`docs/OPENBB_COVERAGE.md`**. After installing or removing OpenBB provider extensions, run `openbb-build` to refresh the Python interface.
 
 ### Persistence and caches
 
