@@ -8,7 +8,7 @@ All notable changes to this project are documented here. Version format: `MAJOR.
 
 - **OpenBB data layer:** shared fetch kernel (`openbb_fetch.py`) with provider chains, timeouts, and logging; `openbb_provider_registry.py` as the single provider order source; adapter routes for profile, fundamentals, news, macro (FRED when `FRED_API_KEY` is set, else pandas-datareader), IPO historical price, and more.
 - **CI:** GitHub Actions runs `pytest` with `USE_OPENBB=true` and `USE_OPENBB=false`, plus `verify_openbb_coverage_doc.py` so registry chains stay documented in `docs/OPENBB_COVERAGE.md`.
-- **Docs:** `docs/OPENBB_COVERAGE.md`, env and architecture updates; `TODOS.md` for backlog tracking.
+- **Docs:** **`docs/OPENBB_COVERAGE.md`** (what uses OpenBB and provider try-order), env and architecture updates, and **`TODOS.md`** for backlog tracking.
 
 ### Fixed
 
