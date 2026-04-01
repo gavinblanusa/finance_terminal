@@ -5,6 +5,7 @@ from edgar_service import (
     _find_primary_doc_from_index,
     _index_htm_candidates,
     _is_8k_disk_cache_valid,
+    _is_8k_skip_cached,
     _is_exhibit_991_filename,
     _is_item_101_filing,
     _parse_columnar_8ks,
@@ -104,6 +105,33 @@ def test_is_8k_disk_cache_valid():
     assert _is_8k_disk_cache_valid(row, "a.htm", "2020-01-01") is True
     assert _is_8k_disk_cache_valid(row, "b.htm", "2020-01-01") is False
     assert _is_8k_disk_cache_valid(row, "a.htm", "2020-01-02") is False
+
+
+def test_is_8k_skip_cached_negative_hit():
+    row = {
+        "event": None,
+        "skip_reason": "no_item_101",
+        "source_primary_document": "a.htm",
+        "source_filing_date": "2020-01-01",
+    }
+    assert _is_8k_skip_cached(row, "a.htm", "2020-01-01") is True
+    assert _is_8k_skip_cached(row, "b.htm", "2020-01-01") is False
+    assert _is_8k_skip_cached(row, "a.htm", "2020-01-02") is False
+
+
+def test_is_8k_skip_cached_ignored_when_event_present():
+    row = {
+        "event": {"filer_ticker": "NVDA"},
+        "skip_reason": "financing",
+        "source_primary_document": "a.htm",
+        "source_filing_date": "2020-01-01",
+    }
+    assert _is_8k_skip_cached(row, "a.htm", "2020-01-01") is False
+
+
+def test_is_8k_skip_cached_requires_reason():
+    row = {"event": None, "source_primary_document": "a.htm", "source_filing_date": "2020-01-01"}
+    assert _is_8k_skip_cached(row, "a.htm", "2020-01-01") is False
 
 
 def test_retry_after_sleep_seconds():

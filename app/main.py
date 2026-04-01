@@ -47,7 +47,12 @@ from market_data import (
     get_competitors,
     clear_peers_cache,
 )
-from edgar_service import get_partnership_events, refresh_edgar_data
+from edgar_service import (
+    get_partnership_events,
+    hydrate_partnership_market_caps,
+    partnership_events_caps_deferred,
+    refresh_edgar_data,
+)
 from plotly_chart_rescale import render_plotly_chart_with_y_rescale
 from streamlit_lightweight_charts import renderLightweightCharts
 from chart_utils import df_to_technical_chart_data, build_technical_chart_config
@@ -209,7 +214,7 @@ def _cached_fetch_ipo_calendar(days_ahead: int):
 
 @st.cache_data(ttl=900)
 def _cached_get_partnership_events(limit: int):
-    return get_partnership_events(limit=limit)
+    return get_partnership_events(limit=limit, defer_yfinance=True)
 
 
 @st.cache_data(ttl=900)
@@ -5063,12 +5068,22 @@ def partnerships_page():
     )
     st.markdown("---")
 
-    col_refresh, col_spacer = st.columns([1, 5])
+    col_refresh, col_opts = st.columns([1, 5])
+    with col_opts:
+        force_submissions_refresh = st.checkbox(
+            "Re-fetch SEC filing index for every watchlist ticker",
+            value=False,
+            key="partnerships_force_submissions",
+            help="Slower (~1 HTTP per ticker). Use when you need the newest 8-K list before the submissions cache expires (default 1 hour).",
+        )
     with col_refresh:
         if st.button("Refresh", key="partnerships_refresh", help="Fetch latest 8-K filings from SEC"):
             with st.spinner("Fetching SEC EDGAR data..."):
                 try:
-                    _, refresh_warnings = refresh_edgar_data(limit=50)
+                    _, refresh_warnings = refresh_edgar_data(
+                        limit=50,
+                        force_submissions_refresh=force_submissions_refresh,
+                    )
                     _cached_get_partnership_events.clear()
                     if refresh_warnings:
                         st.warning(
@@ -5115,7 +5130,8 @@ def partnerships_page():
     )
 
     try:
-        events = _cached_get_partnership_events(50)
+        with st.spinner("Loading partnership events…"):
+            events = _cached_get_partnership_events(50)
     except Exception as e:
         st.error(f"Error loading partnership events: {e}")
         return
@@ -5126,6 +5142,21 @@ def partnerships_page():
             "from the SEC for your watched companies. The first run may take a minute."
         )
         return
+
+    if cap_filter in ("target_band", "target_band_or_unknown"):
+        with st.spinner("Loading market caps…"):
+            events = hydrate_partnership_market_caps(events)
+        _cached_get_partnership_events.clear()
+    elif cap_filter == "all" and partnership_events_caps_deferred():
+        st.caption(
+            "Market caps are **deferred** for speed (cap column shows **—**). "
+            "Band filters load caps automatically."
+        )
+        if st.button("Load market caps", key="partnerships_load_caps"):
+            with st.spinner("Loading market caps…"):
+                events = hydrate_partnership_market_caps(events)
+            _cached_get_partnership_events.clear()
+            st.rerun()
 
     filtered = list(events)
     if not show_other:

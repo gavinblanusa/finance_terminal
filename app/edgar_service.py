@@ -437,6 +437,42 @@ def _is_8k_disk_cache_valid(cached: dict, primary_doc_hint: str, filing_date: st
     return True
 
 
+def _is_8k_skip_cached(cached: dict, primary_doc_hint: str, filing_date: str) -> bool:
+    """
+    True if we already fetched this accession and dropped it (no Item 1.01 or financing filter).
+    Same metadata invalidation as positive 8-K cache.
+    """
+    if not cached or not isinstance(cached, dict):
+        return False
+    if not _is_8k_disk_cache_valid(cached, primary_doc_hint, filing_date):
+        return False
+    reason = (cached.get("skip_reason") or "").strip()
+    if not reason:
+        return False
+    ev = cached.get("event")
+    if isinstance(ev, dict) and ev:
+        return False
+    return True
+
+
+def _save_8k_skip_cache(
+    cache_path: Path,
+    primary_doc_hint: str,
+    filing_date: str,
+    skip_reason: str,
+) -> None:
+    _save_json(
+        cache_path,
+        {
+            "event": None,
+            "skip_reason": skip_reason,
+            "cached_at": datetime.now().isoformat(),
+            "source_primary_document": _normalize_primary_doc_hint(primary_doc_hint),
+            "source_filing_date": (filing_date or "").strip(),
+        },
+    )
+
+
 def _accession_to_path(accession_number: str) -> str:
     """Convert accession number to URL path part (strip hyphens)."""
     return (accession_number or "").replace("-", "")
@@ -722,10 +758,13 @@ def _process_8k(cik: str, filer_ticker: str, filer_name: str, accession_number: 
     """
     cache_path = CACHE_DIR / f"8k_{_accession_to_path(accession_number)}.json"
     cached = _cached_json(cache_path, SUBMISSIONS_CACHE_HOURS * 24)
-    if cached is not None and _is_8k_disk_cache_valid(cached, primary_doc_hint, filing_date):
-        ev = cached.get("event")
-        if isinstance(ev, dict) and ev:
-            return ev
+    if cached is not None:
+        if _is_8k_skip_cached(cached, primary_doc_hint, filing_date):
+            return None
+        if _is_8k_disk_cache_valid(cached, primary_doc_hint, filing_date):
+            ev = cached.get("event")
+            if isinstance(ev, dict) and ev:
+                return ev
 
     index_html = _fetch_8k_index(cik, accession_number)
     if not index_html:
@@ -750,11 +789,13 @@ def _process_8k(cik: str, filer_ticker: str, filer_name: str, accession_number: 
                 text = f"{text}\n\n--- Exhibit 99.1 ---\n\n{ex_text}"
 
     if not _is_item_101_filing(text):
+        _save_8k_skip_cache(cache_path, primary_doc_hint, filing_date, "no_item_101")
         return None
 
     relevance = _relevance_type(text)
     # Filter out routine financing (credit/indenture/notes) so only partnership/strategic events surface
     if relevance == "financing":
+        _save_8k_skip_cache(cache_path, primary_doc_hint, filing_date, "financing")
         return None
 
     counterparty_raw = _extract_counterparties(text, relevance)
@@ -802,48 +843,148 @@ def _process_8k(cik: str, filer_ticker: str, filer_name: str, accession_number: 
     return event
 
 
-def get_partnership_events(limit: int = 50, force_refresh: bool = False) -> List[dict]:
+def partnership_events_caps_deferred() -> bool:
+    """True if partnership_events.json exists and was saved with caps_enriched=false (Yahoo not run yet)."""
+    events_path = CACHE_DIR / EVENTS_CACHE_FILE
+    if not events_path.exists():
+        return False
+    try:
+        with open(events_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("caps_enriched") is False
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
+def hydrate_partnership_market_caps(events: List[dict]) -> List[dict]:
+    """
+    If the on-disk events file is still cap-deferred, run Yahoo cap enrichment and persist caps_enriched=true.
+    No-op when caps are already enriched or the file is missing.
+    """
+    events_path = CACHE_DIR / EVENTS_CACHE_FILE
+    if not events_path.exists():
+        return events
+    try:
+        with open(events_path, "r", encoding="utf-8") as f:
+            file_data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return events
+    if file_data.get("caps_enriched") is not False:
+        return events
+    from partnership_enrichment import enrich_partnership_with_caps
+
+    try:
+        out = enrich_partnership_with_caps(events)
+        _save_json(
+            events_path,
+            {
+                "events": out,
+                "updated": datetime.now().isoformat(),
+                "cache_schema_version": EVENTS_CACHE_SCHEMA_VERSION,
+                "caps_enriched": True,
+            },
+        )
+        return out
+    except Exception as ex:
+        print(f"[EDGAR] partnership cap hydrate failed: {ex}")
+        return events
+
+
+def get_partnership_events(
+    limit: int = 50,
+    force_refresh: bool = False,
+    defer_yfinance: bool = False,
+) -> List[dict]:
     """
     Return list of partnership events (8-K Item 1.01) for watched tickers.
     Each event: filer_ticker, filer_name, filing_date, accession_number, sec_url,
     counterparties (list of {name, is_interest}), snippet (optional).
     Uses file cache for events; when cache is empty returns [] (user should click Refresh).
+
+    When defer_yfinance is True (Streamlit default via cache wrapper), stale signal rows are refreshed
+    and saved with caps_enriched=false first; Yahoo caps are skipped until hydrate_partnership_market_caps
+    or a non-deferred read. Legacy cache files without caps_enriched are treated as fully enriched.
     """
-    from partnership_enrichment import enrich_partnership_events
+    from partnership_enrichment import enrich_partnership_signals_only, enrich_partnership_with_caps
 
     events_path = CACHE_DIR / EVENTS_CACHE_FILE
-    if not force_refresh and events_path.exists():
-        try:
-            with open(events_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            events = data.get("events") or []
-            if events_need_signal_refresh(events):
-                try:
-                    events = enrich_partnership_events(events)
-                    _save_json(
-                        events_path,
-                        {
-                            "events": events,
-                            "updated": datetime.now().isoformat(),
-                            "cache_schema_version": EVENTS_CACHE_SCHEMA_VERSION,
-                        },
-                    )
-                except Exception as ex:
-                    print(f"[EDGAR] partnership enrich on read failed: {ex}")
-            return events[:limit]
-        except (json.JSONDecodeError, OSError):
-            pass
-
     if force_refresh:
-        events, _warnings = refresh_edgar_data(limit=limit)
+        events, _warnings = refresh_edgar_data(limit=limit, force_submissions_refresh=True)
         return events
-    return []
+
+    if not events_path.exists():
+        return []
+
+    try:
+        with open(events_path, "r", encoding="utf-8") as f:
+            file_data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+    events = list(file_data.get("events") or [])
+    if not events:
+        return []
+
+    if events_need_signal_refresh(events):
+        try:
+            events = enrich_partnership_signals_only(events)
+            _save_json(
+                events_path,
+                {
+                    "events": events,
+                    "updated": datetime.now().isoformat(),
+                    "cache_schema_version": EVENTS_CACHE_SCHEMA_VERSION,
+                    "caps_enriched": False,
+                },
+            )
+            if defer_yfinance:
+                return events[:limit]
+            events = enrich_partnership_with_caps(events)
+            _save_json(
+                events_path,
+                {
+                    "events": events,
+                    "updated": datetime.now().isoformat(),
+                    "cache_schema_version": EVENTS_CACHE_SCHEMA_VERSION,
+                    "caps_enriched": True,
+                },
+            )
+            return events[:limit]
+        except Exception as ex:
+            print(f"[EDGAR] partnership enrich on read failed: {ex}")
+            return events[:limit]
+
+    if file_data.get("caps_enriched") is False:
+        if defer_yfinance:
+            return events[:limit]
+        try:
+            events = enrich_partnership_with_caps(events)
+            _save_json(
+                events_path,
+                {
+                    "events": events,
+                    "updated": datetime.now().isoformat(),
+                    "cache_schema_version": EVENTS_CACHE_SCHEMA_VERSION,
+                    "caps_enriched": True,
+                },
+            )
+        except Exception as ex:
+            print(f"[EDGAR] partnership cap enrich on read failed: {ex}")
+        return events[:limit]
+
+    return events[:limit]
 
 
-def refresh_edgar_data(limit: int = 50) -> Tuple[List[dict], List[str]]:
+def refresh_edgar_data(
+    limit: int = 50,
+    force_submissions_refresh: bool = False,
+) -> Tuple[List[dict], List[str]]:
     """
     Force refresh: fetch submissions for all watch tickers, process 8-Ks with Item 1.01,
     extract counterparties, cache results, and return events (newest first, up to limit).
+
+    When force_submissions_refresh is False, uses cached submissions JSON per CIK when still
+    within SUBMISSIONS_CACHE_HOURS (faster Refresh). Set True to re-download every CIK feed.
 
     Returns (events, warnings). Warnings are safe to show in the UI (skipped tickers, etc.).
     """
@@ -868,7 +1009,7 @@ def refresh_edgar_data(limit: int = 50) -> Tuple[List[dict], List[str]]:
             print(f"[EDGAR] Skipping unknown ticker: {ticker}")
             continue
         cik, company_name = ticker_to_cik[t]
-        submissions = _get_submissions_for_cik(cik, force_refresh=True)
+        submissions = _get_submissions_for_cik(cik, force_refresh=force_submissions_refresh)
         if not submissions:
             continue
         name = submissions.get("name") or company_name or t
@@ -919,6 +1060,7 @@ def refresh_edgar_data(limit: int = 50) -> Tuple[List[dict], List[str]]:
             "events": events,
             "updated": datetime.now().isoformat(),
             "cache_schema_version": EVENTS_CACHE_SCHEMA_VERSION,
+            "caps_enriched": True,
         },
     )
     return events, warnings
