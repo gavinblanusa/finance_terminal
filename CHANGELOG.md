@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.3.1] - 2026-04-01
+
+### Fixed
+
+- **CI:** `test_macro_uses_openbb_when_fred_key_set` now patches `openbb_adapter.USE_OPENBB` so the `USE_OPENBB=false` matrix job matches import-time flag behavior (environment-only `monkeypatch` was not enough).
+
+### Changed
+
+- **Docs:** `docs/PROJECT_LEARNINGS.md` exports the gstack `/learn` snapshot; README, CLAUDE, AGENTS, architecture, and docs index call out **`docs/OPENBB_COVERAGE.md`** and project learnings.
+
 ## [0.1.3.0] - 2026-04-01
 
 ### Added
