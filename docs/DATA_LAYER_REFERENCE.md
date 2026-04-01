@@ -190,6 +190,33 @@ movers_df, rates_df = macro_context_to_dataframes(ctx)
 
 ---
 
+## Partnerships (Streamlit only)
+
+**Purpose:** Item 1.01 8-K partnership rows for the watchlist: counterparties, signal scoring, filer market-cap band, excerpts.
+
+**Entry points:**
+
+- `edgar_service.get_partnership_events(..., defer_yfinance=...)` — load or refresh; when `defer_yfinance=True`, events may omit full Yahoo caps until hydrate.
+- `edgar_service.refresh_edgar_data(..., force_submissions_refresh=...)` — rebuild from SEC; reuse cached submissions index unless forced.
+- `edgar_service.hydrate_partnership_market_caps(events)` — fill caps for rows missing `market_cap_usd` (used when user picks a cap band or **Load market caps**).
+- `partnership_enrichment.enrich_partnership_signals_only` / `enrich_partnership_with_caps` — signal path vs caps path.
+
+**Caches (project root `.edgar_cache/`):**
+
+| Artifact | Role |
+|----------|------|
+| Per-CIK submissions JSON | Filing index; reused on Refresh unless **re-fetch SEC filing index** |
+| Per-accession 8-K bodies | Parsed Item 1.01 / exhibit text |
+| `partnership_events.json` | Merged event list; includes `caps_enriched`, `cache_schema_version` |
+| Skip tombstones | Negative cache for 8-Ks already classified as skip (not 1.01 / not financing) |
+| `partnership_filer_market_caps.json` | Yahoo market caps by ticker, TTL-backed |
+
+**Sources:** SEC EDGAR (HTTPS); Yahoo Finance via **yfinance** for filer caps.
+
+**Failures:** Rate limits and network errors surface as warnings or empty panels; missing CIK for a watchlist ticker is listed in refresh `warnings`.
+
+---
+
 ## HTTP API (FastAPI)
 
 Optional **read-only** REST surface in [`app/terminal_api.py`](../app/terminal_api.py). Run from project root:

@@ -14,7 +14,7 @@ For AIs and refactors: this doc explains how data moves through the app and how 
 | **Portfolio & Taxes** | `portfolio_taxes_page()` | `db`, `models` (Trades), `tax_engine` (CRUD, HIFO, CSV import, prices) | PostgreSQL (trades) |
 | **Market Analysis** | `market_analysis_page()` | `market_data` (OHLCV, valuation, signals, profile, fundamentals, news, competitors); `options_iv_term` (ATM IV term via yfinance); `market_data` may call `api_clients` | `.market_cache/` (file); `valuation_history`, `peer_overrides` (DB); Streamlit cache for IV term (600s) |
 | **IPO Vintage Tracker** | `ipo_tracker_page()` | `ipo_service`, `db`, `models` (IPO_Registry) | `.ipo_cache/` (file); PostgreSQL (ipo_registry) |
-| **Partnerships** | `partnerships_page()` | `edgar_service`, `partnerships_config` | `.edgar_cache/` (file) |
+| **Partnerships** | `partnerships_page()` | `edgar_service`, `partnerships_config`, `partnership_signal`, `partnership_enrichment` | `.edgar_cache/` (file): submissions, 8-K, `partnership_events.json`, skip tombstones, `partnership_filer_market_caps.json` |
 | **13F Institutional Holdings** | `thirteenf_page()` | `thirteenf_service`, `thirteenf_config` | `.edgar_cache/13f/` (file) |
 
 ---
@@ -67,11 +67,12 @@ Refactor note: See **MARKET_ANALYSIS_DATA_REFACTOR.md** for planned auto-save an
 
 ### Partnerships
 
-1. **Event list**: `edgar_service.get_partnership_events()` → reads `.edgar_cache/partnership_events.json` if valid; else `refresh_edgar_data()` which uses SEC EDGAR (ticker→CIK, submissions, 8-K docs), filters Item 1.01, extracts counterparties, then writes back to `.edgar_cache/`.
-2. **Refresh return value**: `refresh_edgar_data()` returns `(events, warnings)`; `warnings` lists skipped watchlist tickers (e.g. no CIK). The Streamlit Refresh button surfaces `warnings` when non-empty.
-3. **Enrichment**: After refresh (and on read when any row’s `signal_version` is stale), `partnership_enrichment.enrich_partnership_events()` batches **yfinance** market cap per filer ticker, then `partnership_signal.enrich_event_dict()` adds `signal_score`, `signal_reasons`, `display_excerpt`, `interest_hit` / `interest_labels`, and `filer_in_cap_band`. Cache file may include `cache_schema_version`.
-4. **Config**: `partnerships_config.py` defines **WATCH_TICKERS**, **COUNTERPARTY_INTEREST_NAMES**, **COUNTERPARTY_ALIASES**, and **FILER_CAP_USD_MIN / MAX** for scoring and UI filters.
-5. **UI**: `main.py` `partnerships_page()` … combined **Signal** column (score + HIT + reasons), cap filter with **All (dim outside band)** styling, optional “Other” relevance rows, inspect control for full excerpt and reasons, **About this data** expander.
+1. **Event list**: `edgar_service.get_partnership_events(..., defer_yfinance=True)` (Streamlit default) → reads `.edgar_cache/partnership_events.json` if valid; else `refresh_edgar_data()`. Refresh uses SEC EDGAR (ticker→CIK, submissions JSON, 8-K docs), filters Item 1.01, extracts counterparties, then writes `partnership_events.json` with **`caps_enriched: false`** when Yahoo caps are deferred. **`force_submissions_refresh`** (UI: re-fetch SEC filing index) bypasses the on-disk submissions cache when you need a fresh index.
+2. **Negative cache**: 8-K accessions skipped as “not Item 1.01” or “not financing” are recorded so a later refresh does not re-fetch those filings.
+3. **Refresh return value**: `refresh_edgar_data()` returns `(events, warnings)`; `warnings` lists skipped watchlist tickers (e.g. no CIK). The Streamlit **Refresh** button surfaces `warnings` when non-empty.
+4. **Enrichment**: `partnership_enrichment.enrich_partnership_signals_only()` runs first (signals without blocking on caps). Full cap path: `enrich_partnership_with_caps()` / `fetch_market_caps_yf()` uses a **ThreadPoolExecutor** and **`.edgar_cache/partnership_filer_market_caps.json`** (TTL). `partnership_signal.enrich_event_dict()` adds `signal_score`, `signal_reasons`, `display_excerpt`, `interest_hit` / `interest_labels`, and `filer_in_cap_band`. When the UI needs caps (cap-band filter or **Load market caps** on **All**), `edgar_service.hydrate_partnership_market_caps()` fills missing caps and may rewrite the events file with **`caps_enriched: true`**. Cache file may include `cache_schema_version`.
+5. **Config**: `partnerships_config.py` defines **WATCH_TICKERS**, **COUNTERPARTY_INTEREST_NAMES**, **COUNTERPARTY_ALIASES**, and **FILER_CAP_USD_MIN / MAX** for scoring and UI filters.
+6. **UI**: `main.py` `partnerships_page()` … combined **Signal** column (score + HIT + reasons), cap filter with **All (dim outside band)** styling, optional “Other” relevance rows, inspect control for full excerpt and reasons, **About this data** expander, spinners while loading, optional re-fetch submissions checkbox.
 
 ### 13F Institutional Holdings
 

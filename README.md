@@ -84,6 +84,8 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/edgar_service.py` | SEC EDGAR 8-K filings, partnership-event extraction |
 | `app/thirteenf_service.py` | SEC 13F institutional holdings |
 | `app/partnerships_config.py` | Config: watched tickers and counterparties for partnerships page |
+| `app/partnership_signal.py` | Partnerships: Item 1.01 signal score, reasons, excerpts, cap-band flags |
+| `app/partnership_enrichment.py` | Partnerships: Yahoo filer market caps (parallel fetch, disk TTL cache); signal-only vs full enrich |
 | `app/thirteenf_config.py` | Config: 13F institutions to track |
 | `app/plotly_chart_rescale.py` | Plotly chart y-axis rescaling helper |
 | `app/chart_utils.py` | Lightweight-charts helpers: OHLCV→chart config, technical chart build |
@@ -150,8 +152,10 @@ The tax engine uses **Highest-In-First-Out (HIFO)** methodology:
 
 ### Partnerships
 - **SEC 8-K partnership events**: Item 1.01 filings, extracted counterparties, **signal score** and **why** lines, **excerpt**, **yfinance** filer market cap, configurable **cap band** and **alias** / interest matching (`partnerships_config.py`, `partnership_signal.py`, `partnership_enrichment.py`)
+- **Faster refresh**: **Refresh** reuses the saved SEC filing index on disk unless you check **re-fetch SEC filing index**. Skipped 8-K rows (not Item 1.01 or not treated as financing) are **remembered** so the app does not re-download and re-parse them.
+- **Lazy market caps**: First load computes **signals** quickly; full **Yahoo** cap numbers load when you pick a **cap band** filter or click **Load market caps** on **All (dim outside band)**. Caps use **parallel** Yahoo calls and a **disk cache** (TTL) under `.edgar_cache/`.
 - **Filters**: default **in-band** filer cap view; switch to **All (dim outside band)** to see every row while muting out-of-band filers; optional **Other** (ambiguous Item 1.01); **Refresh** shows warnings if any watchlist ticker has no CIK
-- Cached EDGAR data to respect rate limits
+- Cached EDGAR data under `.edgar_cache/` (submissions, 8-K bodies, `partnership_events.json`) to respect rate limits
 
 ### 13F Institutional Holdings
 - **Quarterly 13F filings** for configurable institutions (via `thirteenf_config.py`)
@@ -182,7 +186,7 @@ This section gives future AIs and refactors enough context to navigate the codeb
 | Company profile, fundamentals, news | `market_data.py` (`get_company_profile`, `get_fundamentals_ratios`, `fetch_company_news`), `financetoolkit_adapter.py`, `openbb_adapter.py` | Fundamentals: FinanceToolkit first when enabled, then OpenBB, then FMP; profile/news: OpenBB then FMP/Finnhub; profile/fundamentals use DB cache |
 | Single-ticker price (tax/portfolio) | `tax_engine.py` (`fetch_single_price`, `get_cached_price`), `openbb_adapter.py` | OpenBB quote first, then yfinance + Alpha Vantage + `api_clients`; in-memory cache 15 min |
 | IPO calendar and vintage | `ipo_service.py` (`fetch_ipo_calendar`, `get_vintage_performance`, `get_ipo_price_history`), `openbb_adapter.py` | OpenBB for current/historical price when available; Finnhub for calendar; file cache `.ipo_cache/` |
-| 8-K partnership events | `edgar_service.py` (`get_partnership_events`, `refresh_edgar_data` → `(events, warnings)`) | SEC EDGAR; file cache `.edgar_cache/` |
+| 8-K partnership events | `edgar_service.py` (`get_partnership_events`, `refresh_edgar_data` → `(events, warnings)`; optional `defer_yfinance`); `partnership_enrichment.py` (signal-only vs cap hydrate) | SEC EDGAR; `.edgar_cache/` including `partnership_events.json` (`caps_enriched`), submissions reuse, negative skip cache for dropped 8-Ks, `partnership_filer_market_caps.json` |
 | 13F institutional holdings | `thirteenf_service.py` (`get_13f_filings_for_institution`, `get_13f_holdings_by_quarter`, `get_13f_compare`, etc.) | SEC EDGAR; file cache `.edgar_cache/13f/` |
 
 ### Environment variables
@@ -210,7 +214,7 @@ Load from `.env` in project root. Used by:
 ### Persistence and caches
 
 - **PostgreSQL** (`db.py` + `models.py`): `trades`, `watchlist`, `ipo_registry`, `valuation_history`, `company_profile`, `company_fundamentals`, `peer_overrides`.
-- **File caches** (project root): `.market_cache/` (OHLCV, ticker info, TV signals, Alpha Vantage responses, peers candidates), `.ipo_cache/` (IPO calendar JSON), `.edgar_cache/` (EDGAR submissions, 8-K, partnership_events.json).
+- **File caches** (project root): `.market_cache/` (OHLCV, ticker info, TV signals, Alpha Vantage responses, peers candidates), `.ipo_cache/` (IPO calendar JSON), `.edgar_cache/` (EDGAR submissions, 8-K, `partnership_events.json`, `partnership_filer_market_caps.json`, negative cache for skipped 8-Ks).
 - **In-memory**: `tax_engine` price cache (15 min TTL).
 
 ### Conventions and gotchas
