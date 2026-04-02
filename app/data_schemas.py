@@ -24,6 +24,8 @@ class MacroMoverSchema(BaseModel):
     previous_close: Optional[float] = None
     pct_change: Optional[float] = None
     error: Optional[str] = None
+    realized_vol_20d: Optional[float] = None
+    change_over_sigma: Optional[float] = None
 
 
 class FredRateSchema(BaseModel):
@@ -108,6 +110,8 @@ def macro_context_to_schema(result: MacroContextResult) -> MacroContextSchema:
                 previous_close=m.previous_close,
                 pct_change=m.pct_change,
                 error=m.error,
+                realized_vol_20d=m.realized_vol_20d,
+                change_over_sigma=m.change_over_sigma,
             )
             for m in result.movers
         ],

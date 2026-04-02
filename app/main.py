@@ -419,6 +419,23 @@ st.markdown(
         color: #2dd4bf;
         letter-spacing: 0.04em;
     }
+    .gft-news-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+        margin: 0.35rem 0 0.15rem 0;
+    }
+    .gft-news-tag {
+        font-family: 'IBM Plex Sans', sans-serif;
+        font-size: 0.6rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #94a3b8;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        padding: 0.08rem 0.35rem;
+        border-radius: 3px;
+    }
     .gft-news-headline {
         font-size: 0.88rem;
         font-weight: 500;
@@ -641,6 +658,8 @@ def _style_macro_movers_styler(df: pd.DataFrame):
     )
     if "Change %" in df.columns:
         styler = styler.apply(_pct_colors, subset=["Change %"])
+    if "Δ/σ" in df.columns:
+        styler = styler.apply(_pct_colors, subset=["Δ/σ"])
     fmt: dict = {}
     if "Last" in df.columns:
         fmt["Last"] = "{:.2f}"
@@ -648,6 +667,10 @@ def _style_macro_movers_styler(df: pd.DataFrame):
         fmt["Prev close"] = "{:.2f}"
     if "Change %" in df.columns:
         fmt["Change %"] = "{:+.2f}%"
+    if "σ 20d %" in df.columns:
+        fmt["σ 20d %"] = "{:.2f}"
+    if "Δ/σ" in df.columns:
+        fmt["Δ/σ"] = "{:+.2f}"
     if fmt:
         styler = styler.format(fmt, na_rep="—")
     return styler
@@ -721,6 +744,13 @@ def _gft_render_news_hero_cards(ranked: list, limit: int = 3) -> None:
             if link
             else '<span style="color:#64748b;font-size:0.72rem;">No link</span>'
         )
+        tags_html = ""
+        if item.event_tags:
+            pills = "".join(
+                f'<span class="gft-news-tag">{html.escape(t)}</span>'
+                for t in item.event_tags[:3]
+            )
+            tags_html = f'<div class="gft-news-tags" title="Rule-based tags (heuristic)">{pills}</div>'
         parts.append(
             '<div class="gft-news-card">'
             '<div class="gft-news-card-meta">'
@@ -728,6 +758,7 @@ def _gft_render_news_hero_cards(ranked: list, limit: int = 3) -> None:
             f'<span class="gft-news-time">{html.escape(ts)}</span>'
             "</div>"
             f'<div class="gft-news-tickers">{tickers}</div>'
+            f"{tags_html}"
             f'<p class="gft-news-headline">{head}</p>'
             f"{link_html}"
             "</div>"
@@ -818,7 +849,8 @@ def dashboard_page():
     _gft_dash_section_header(
         "Context · GMM / BTMM",
         "Macro snapshot",
-        "Cross-asset movers (Yahoo Finance, delayed). Treasury & Fed via FRED when FRED_API_KEY is set. "
+        "Cross-asset movers (Yahoo Finance, daily closes). σ 20d is stdev of last 20 daily % changes; "
+        "Δ/σ is yesterday’s move vs that σ (omitted for VIX). Treasury & Fed via FRED when FRED_API_KEY is set. "
         "Not a Bloomberg terminal—same job: know the tape before you read the story.",
     )
     try:
@@ -1287,6 +1319,7 @@ def dashboard_page():
             "Flow · TOP",
             "Headlines for your book",
             "Merged feed for portfolio + watchlist, ranked with transparent heuristics (mentions, keywords). "
+            "Rule-based event tags (max 3) are assistive only; high-impact tags add +1 to score. "
             "Not Bloomberg TOP—same intent: less noise before you drill.",
         )
         try:
@@ -1325,6 +1358,7 @@ def dashboard_page():
                                 "Score": item.score,
                                 "Time": ts,
                                 "Tickers": ", ".join(item.tickers_matched),
+                                "Tags": ", ".join(item.event_tags) if item.event_tags else "",
                                 "Headline": item.headline,
                                 "Source": item.source,
                                 "Link": item.url or None,

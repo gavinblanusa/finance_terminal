@@ -13,6 +13,16 @@ Backlog from OpenBB data-layer design (`~/.gstack/projects/gavinblanusa-finance_
 3. **Inventory drift guard (optional)**  
    **Done:** `scripts/verify_openbb_coverage_doc.py` (CI job `openbb-doc-registry`) ensures every multi-provider chain in `openbb_provider_registry.py` appears in `docs/OPENBB_COVERAGE.md`.
 
+## Morning stack / autoplan deferrals (2026-04-02)
+
+From `docs/plans/morning-stack-approach-b.md` (Approach B implementation + CEO/design review notes):
+
+- **LLM or NLP event tagging** for headlines (v1 stays rule-based; revisit if tag noise stays high).
+- **Separate “Global context” page** (Approach C) if Dashboard density hurts scan time after B ships.
+- **Morning digest** (email/push) using the same pipeline.
+- **Macro calendar** (scheduled events) vs post-hoc headline tags only.
+- **LLM kill/continue doc:** one-page decision on when to add model-based classification (cost, latency, offline).
+
 ## QA follow-ups (2026-04-01)
 
 - **Medium — console:** Streamlit 1.55 may still log empty `theme.sidebar` widget/skeleton colors in some setups. Tracked in local QA report under `.gstack/` (gitignored). No reliable `config.toml` fix found yet.
