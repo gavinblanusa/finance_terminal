@@ -10,12 +10,12 @@ This app is a **Streamlit monolith** (no public HTTP API). This document is the 
 
 | Field (conceptual) | Type | Notes |
 |-------------------|------|--------|
-| `movers` | list of rows | Yahoo symbols; last / prev / change % |
-| `rates` | list of rows | FRED latest observation per series when configured |
+| `movers` | list of rows | Yahoo symbols; last / prev / change %; **realized_vol_20d**, **change_over_sigma** (null for errors or **VIX**) |
+| `rates` | list of rows | FRED latest observation per series when configured (includes **SOFR**, **DGS5**, **DGS30**, etc.) |
 | `fred_configured` | bool | `True` if `FRED_API_KEY` set and FRED was queried |
 | `errors` | list[str] | Aggregated mover/FRED error strings |
 
-**Sources:** yfinance (daily ~15d), FRED API (`api.stlouisfed.org`) when `FRED_API_KEY` is set.
+**Sources:** yfinance (daily ~**3mo** window for movers so 20 trading-day vol is defined), FRED API (`api.stlouisfed.org`) when `FRED_API_KEY` is set.
 
 **Caching:** `_cached_macro_context` in `main.py`, TTL 900s. Cleared by **Refresh Prices**.
 

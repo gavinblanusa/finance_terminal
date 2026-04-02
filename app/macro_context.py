@@ -6,8 +6,9 @@ optional Treasury/rates via FRED when FRED_API_KEY is set.
 from __future__ import annotations
 
 import os
+import statistics
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 import pandas as pd
 import requests
@@ -17,6 +18,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 FRED_API_KEY = os.getenv("FRED_API_KEY", "").strip()
+
+# Enough calendar days for ~20+ trading closes (vol uses last 21 closes → 20 daily returns).
+MOVER_HISTORY_PERIOD = "3mo"
+# Symbols where daily-return σ is misleading (implied vol index, etc.): omit σ and Δ/σ.
+SKIP_CHANGE_SIGMA_SYMBOLS = frozenset({"^VIX"})
 
 # Yahoo symbols: (symbol, short label for UI)
 MACRO_MOVERS: List[tuple[str, str]] = [
@@ -31,12 +37,15 @@ MACRO_MOVERS: List[tuple[str, str]] = [
     ("CL=F", "WTI Crude"),
 ]
 
-# FRED series id -> display title
+# FRED series id -> display title (order: curve-ish then policy)
 FRED_RATES: Dict[str, str] = {
-    "DGS10": "10Y Treasury (%)",
-    "DGS2": "2Y Treasury (%)",
     "DGS3MO": "3M T-Bill (%)",
+    "DGS2": "2Y Treasury (%)",
+    "DGS5": "5Y Treasury (%)",
+    "DGS10": "10Y Treasury (%)",
+    "DGS30": "30Y Treasury (%)",
     "EFFR": "Fed Funds Effective (%)",
+    "SOFR": "SOFR (%)",
     "T10Y2Y": "10Y–2Y spread (%)",
 }
 
@@ -49,6 +58,8 @@ class MacroMoverRow:
     previous_close: float | None
     pct_change: float | None
     error: str | None = None
+    realized_vol_20d: float | None = None
+    change_over_sigma: float | None = None
 
 
 @dataclass
@@ -74,11 +85,63 @@ def _pct_change(last: float, prev: float) -> float | None:
     return (last - prev) / prev * 100.0
 
 
+def _daily_pct_returns(closes: Sequence[float]) -> List[float]:
+    out: List[float] = []
+    for i in range(1, len(closes)):
+        prev_c = closes[i - 1]
+        if prev_c == 0:
+            return []
+        out.append((closes[i] - prev_c) / prev_c * 100.0)
+    return out
+
+
+def realized_vol_20d_from_closes(close_series: pd.Series) -> float | None:
+    """
+    Sample stdev of the last 20 daily percentage changes from the last 21 closes.
+    Returns None if insufficient data or degenerate series.
+    """
+    vals = [float(x) for x in close_series.dropna().tolist()]
+    if len(vals) < 21:
+        return None
+    window = vals[-21:]
+    rets = _daily_pct_returns(window)
+    if len(rets) < 20:
+        return None
+    last_20 = rets[-20:]
+    if len(last_20) < 2:
+        return None
+    try:
+        v = statistics.stdev(last_20)
+    except statistics.StatisticsError:
+        return None
+    if v is None or v < 1e-12:
+        return None
+    return float(v)
+
+
+def _vol_and_z(
+    close: pd.Series,
+    last: float,
+    prev: float,
+    pct_change: float | None,
+    skip_sigma: bool,
+) -> tuple[float | None, float | None]:
+    if skip_sigma or pct_change is None:
+        return None, None
+    vol = realized_vol_20d_from_closes(close)
+    if vol is None or vol < 1e-12:
+        return None, None
+    z = pct_change / vol
+    return vol, z
+
+
 def fetch_macro_movers() -> List[MacroMoverRow]:
     rows: List[MacroMoverRow] = []
     for sym, lbl in MACRO_MOVERS:
         try:
-            hist = yf.Ticker(sym).history(period="15d", interval="1d", auto_adjust=True)
+            hist = yf.Ticker(sym).history(
+                period=MOVER_HISTORY_PERIOD, interval="1d", auto_adjust=True
+            )
             if hist is None or hist.empty or "Close" not in hist.columns:
                 rows.append(
                     MacroMoverRow(
@@ -106,14 +169,19 @@ def fetch_macro_movers() -> List[MacroMoverRow]:
                 continue
             last = float(close.iloc[-1])
             prev = float(close.iloc[-2])
+            pct = _pct_change(last, prev)
+            skip_sig = sym in SKIP_CHANGE_SIGMA_SYMBOLS
+            vol, z = _vol_and_z(close, last, prev, pct, skip_sig)
             rows.append(
                 MacroMoverRow(
                     sym,
                     lbl,
                     last,
                     prev,
-                    _pct_change(last, prev),
+                    pct,
                     None,
+                    vol,
+                    z,
                 )
             )
         except Exception as e:
@@ -198,6 +266,8 @@ def macro_context_to_dataframes(result: MacroContextResult) -> tuple[pd.DataFram
                 "Last": m.last,
                 "Prev close": m.previous_close,
                 "Change %": m.pct_change,
+                "σ 20d %": m.realized_vol_20d,
+                "Δ/σ": m.change_over_sigma,
                 "Note": m.error or "",
             }
         )

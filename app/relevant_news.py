@@ -27,6 +27,19 @@ NEWS_KEYWORDS = (
     "restructuring",
 )
 
+# Rule-based event tags (heuristic). Max 3 per headline, first matches in order win.
+_EVENT_TAG_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
+    ("earnings", re.compile(r"\bearnings\b|\bguidance\b|\beats\b|\bEPS\b|\bEBITDA\b", re.I)),
+    ("m&a", re.compile(r"\bmerger\b|\bacquisition\b|\btakeover\b|\bbuyout\b|\bM&A\b", re.I)),
+    ("legal", re.compile(r"\blawsuit\b|\bSEC\b|\binvestigation\b|\bsettlement\b|\bviolation\b", re.I)),
+    ("fda", re.compile(r"\bFDA\b|\brecall\b|\bclinical\b|\btrial\b|\bdrug approval\b", re.I)),
+    ("ratings", re.compile(r"\bupgrade\b|\bdowngrade\b|\banalyst\b|\bprice target\b", re.I)),
+    ("macro", re.compile(r"\bFed\b|\bFOMC\b|\bCPI\b|\binflation\b|\bcentral bank\b|\bjobs report\b", re.I)),
+)
+
+# Extra score bump when any of these tags match (deterministic; document in UI as heuristic).
+HIGH_IMPACT_TAGS = frozenset({"earnings", "m&a", "legal", "fda"})
+
 MAX_SYMBOLS = 25
 LIMIT_LARGE_UNIVERSE = 3
 LIMIT_SMALL_UNIVERSE = 6
@@ -43,6 +56,7 @@ class RankedNewsItem:
     tickers_matched: List[str]
     portfolio_hits: List[str]
     watchlist_hits: List[str]
+    event_tags: List[str]
 
 
 def _parse_dt(raw: Any) -> Optional[datetime]:
@@ -77,6 +91,26 @@ def _parse_dt(raw: Any) -> Optional[datetime]:
         except ValueError:
             continue
     return None
+
+
+def extract_event_tags(headline: str, summary: str = "", max_tags: int = 3) -> List[str]:
+    """
+    Heuristic event tags from headline + summary (rule-based, not NLP).
+    """
+    blob = f"{headline} {summary}".strip()
+    if not blob:
+        return []
+    found: List[str] = []
+    seen: Set[str] = set()
+    for tag, pat in _EVENT_TAG_PATTERNS:
+        if tag in seen:
+            continue
+        if pat.search(blob):
+            found.append(tag)
+            seen.add(tag)
+        if len(found) >= max_tags:
+            break
+    return found
 
 
 def _keyword_bonus(text: str) -> int:
@@ -171,6 +205,10 @@ def build_relevant_news(
             score += 1
         score += _keyword_bonus(text_blob)
 
+        event_tags = extract_event_tags(headline, summary)
+        if event_tags and HIGH_IMPACT_TAGS.intersection(event_tags):
+            score += 1
+
         dedupe = url if url else hashlib.sha256(headline.encode("utf-8", errors="ignore")).hexdigest()[:16]
         dedupe_full = f"{source}|{dedupe}"
         if dedupe_full in dedupe_keys:
@@ -187,6 +225,7 @@ def build_relevant_news(
                 tickers_matched=matched,
                 portfolio_hits=port_hits,
                 watchlist_hits=watch_hits,
+                event_tags=event_tags,
             )
         )
 

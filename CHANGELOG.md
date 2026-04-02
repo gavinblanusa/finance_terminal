@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.4.0] - 2026-04-02
+
+### Added
+
+- **Dashboard macro strip:** **σ 20d %** and **Δ/σ** (vol-normalized move) on the morning snapshot; **VIX** stays in the table but skips σ-based columns where they do not apply.
+- **Macro context:** **SOFR**, **5Y**, and **30Y** (FRED) in the rates block; macro mover history window aligned to **3 months** for the new columns.
+- **Relevant news:** lightweight **event tags** (earnings, Fed, CPI, jobs, M&A, etc.) with a **Tags** column and scoring bump for high-impact tag hits.
+- **JSON export:** optional vol/z fields on macro mover schema for downstream use.
+- **Tests:** `tests/test_macro_context_vol.py`, `tests/test_relevant_news_tags.py`.
+
+### Changed
+
+- **Docs:** `docs/ARCHITECTURE.md`, `docs/DATA_LAYER_REFERENCE.md`, and **TODOS** deferrals for follow-on work (LLM tags, Global page, digest).
+
 ## [0.1.3.1] - 2026-04-01
 
 ### Fixed
