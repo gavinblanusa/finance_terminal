@@ -144,7 +144,7 @@ def _cached_iv_term_structure(ticker: str, spot_key: float):
     return build_iv_term_structure(ticker, max_expirations=12, spot_override=override)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Loading credit & duration proxies…")
 def _cached_fi_context_strip():
     return build_fi_context_strip()
 
