@@ -86,7 +86,7 @@ from typing import Optional, Tuple
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-@st.cache_data(ttl=900)  # Cache for 15 minutes
+@st.cache_data(ttl=900, show_spinner="Loading portfolio snapshot…")  # Cache for 15 minutes
 def get_portfolio_data():
     """
     Fetch portfolio summary with caching to reduce API calls.
@@ -96,12 +96,12 @@ def get_portfolio_data():
     return fetch_portfolio_snapshot_dict()
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Loading macro snapshot…")
 def _cached_macro_context():
     return build_macro_context()
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Loading portfolio risk snapshot…")
 def _cached_portfolio_insights(positions_key: Tuple[Tuple[str, float], ...]):
     positions = [{"ticker": t, "current_value": v} for t, v in positions_key]
     return build_portfolio_insights(positions, get_company_profile, fetch_ohlcv)
@@ -115,7 +115,7 @@ def _ff_factors_cache_mtime() -> float:
         return 0.0
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Loading factor loadings…")
 def _cached_factor_exposure(
     positions_key: Tuple[Tuple[str, float], ...],
     ff_cache_mtime: float,
@@ -126,7 +126,7 @@ def _cached_factor_exposure(
     return build_factor_exposure(positions, fetch_ohlcv, period_years=3)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Estimating trade impact…")
 def _cached_tca_estimate(ticker: str, shares: float, side: str):
     return estimate_trade_impact(
         ticker,
@@ -137,7 +137,7 @@ def _cached_tca_estimate(ticker: str, shares: float, side: str):
     )
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner="Loading options IV term…")
 def _cached_iv_term_structure(ticker: str, spot_key: float):
     """spot_key is rounded spot for cache stability; 0 means let yfinance infer spot."""
     override = float(spot_key) if spot_key and spot_key > 0 else None
@@ -149,7 +149,7 @@ def _cached_fi_context_strip():
     return build_fi_context_strip()
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner=False)
 def _cached_tnx_last_percent() -> float:
     """^TNX last close in yield percent points (e.g. 4.25). Fallback 4.25."""
     try:
@@ -177,71 +177,71 @@ def _cached_relevant_news(port_tuple: Tuple[str, ...], watch_tuple: Tuple[str, .
 # Only idempotent, serializable-return functions; TTLs keep data reasonably fresh.
 # -----------------------------------------------------------------------------
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner="Loading ticker summary…")
 def _cached_get_ticker_summary(ticker: str, alert_price: Optional[float] = None):
     return get_ticker_summary(ticker, alert_price=alert_price)
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner="Loading company profile…")
 def _cached_get_company_profile(ticker: str):
     return get_company_profile(ticker)
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner="Loading valuation data…")
 def _cached_get_valuation_chart_data(ticker: str, years: int, skip_db: bool):
     return get_valuation_chart_data(ticker, years, skip_db=skip_db)
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner="Loading fundamentals…")
 def _cached_get_fundamentals_ratios(ticker: str):
     return get_fundamentals_ratios(ticker)
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner="Loading company news…")
 def _cached_fetch_company_news(ticker: str, limit: int):
     return fetch_company_news(ticker, limit)
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner="Loading insider transactions…")
 def _cached_fetch_insider_transactions(ticker: str):
     return fetch_insider_transactions(ticker)
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=1800, show_spinner="Loading IPO calendar…")
 def _cached_fetch_ipo_calendar(days_ahead: int):
     return fetch_ipo_calendar(days_ahead=days_ahead)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Loading partnership events…")
 def _cached_get_partnership_events(limit: int):
     return get_partnership_events(limit=limit, defer_yfinance=True)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Loading 13F filings…")
 def _cached_get_13f_filings_for_institution(cik: str):
     return get_13f_filings_for_institution(cik)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Loading 13F holdings…")
 def _cached_get_13f_holdings_by_quarter(cik: str, year: int, quarter: int):
     return get_13f_holdings_by_quarter(cik, year, quarter)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Comparing 13F filings…")
 def _cached_get_13f_compare(cik: str, accession_a: str, accession_b: str):
     return get_13f_compare(cik, accession_a, accession_b)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Loading 13F holders…")
 def _cached_get_holders_by_cusip(cusip: str, institution_ciks: tuple, year: int, quarter: int):
     return get_holders_by_cusip(cusip, list(institution_ciks), year, quarter)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, show_spinner="Loading overlap holdings…")
 def _cached_get_overlap_holdings(cik_list: tuple, year: int, quarter: int):
     return get_overlap_holdings(list(cik_list), year, quarter)
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner="Loading macro indicator…")
 def _cached_fetch_macro_indicator(metric: str):
     return fetch_macro_indicator(metric)
 
