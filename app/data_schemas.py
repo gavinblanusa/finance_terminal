@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from factor_exposure import FactorExposureResult
+from factor_exposure import FactorAttributionResult, FactorExposureResult
 from macro_context import MacroContextResult
 from options_iv_term import IVTermStructureResult
 from portfolio_insights import PortfolioInsights
@@ -66,6 +66,23 @@ class FactorExposureSchema(BaseModel):
     regression_start: Optional[str] = None
     data_warnings: List[str] = Field(default_factory=list)
     factors_available: bool = False
+
+
+class FactorAttributionSchema(BaseModel):
+    attribution_start: Optional[str] = None
+    attribution_end: Optional[str] = None
+    estimation_start: Optional[str] = None
+    estimation_end: Optional[str] = None
+    n_attribution_days: int = 0
+    portfolio_alpha: float = 0.0
+    portfolio_factor_betas: Dict[str, float] = Field(default_factory=dict)
+    cumulative_excess_return: float = 0.0
+    cumulative_factor_contributions: Dict[str, float] = Field(default_factory=dict)
+    cumulative_alpha_component: float = 0.0
+    cumulative_residual: float = 0.0
+    data_warnings: List[str] = Field(default_factory=list)
+    available: bool = False
+    preset: Optional[str] = None
 
 
 class IVTermPointSchema(BaseModel):
@@ -159,6 +176,29 @@ def factor_exposure_to_schema(f: FactorExposureResult) -> FactorExposureSchema:
     )
 
 
+def factor_attribution_to_schema(
+    a: FactorAttributionResult,
+    *,
+    preset: Optional[str] = None,
+) -> FactorAttributionSchema:
+    return FactorAttributionSchema(
+        attribution_start=a.attribution_start,
+        attribution_end=a.attribution_end,
+        estimation_start=a.estimation_start,
+        estimation_end=a.estimation_end,
+        n_attribution_days=a.n_attribution_days,
+        portfolio_alpha=a.portfolio_alpha,
+        portfolio_factor_betas=dict(a.portfolio_factor_betas),
+        cumulative_excess_return=a.cumulative_excess_return,
+        cumulative_factor_contributions=dict(a.cumulative_factor_contributions),
+        cumulative_alpha_component=a.cumulative_alpha_component,
+        cumulative_residual=a.cumulative_residual,
+        data_warnings=list(a.data_warnings),
+        available=a.available,
+        preset=preset,
+    )
+
+
 def iv_term_structure_to_schema(r: IVTermStructureResult) -> IVTermStructureSchema:
     return IVTermStructureSchema(
         ticker=r.ticker,
@@ -204,6 +244,8 @@ def dump_json_ready(obj: Any) -> Any:
         return portfolio_insights_to_schema(obj).model_dump(mode="json")
     if isinstance(obj, FactorExposureResult):
         return factor_exposure_to_schema(obj).model_dump(mode="json")
+    if isinstance(obj, FactorAttributionResult):
+        return factor_attribution_to_schema(obj).model_dump(mode="json")
     if isinstance(obj, TCAEstimateResult):
         return tca_to_schema(obj).model_dump(mode="json")
     if isinstance(obj, IVTermStructureResult):
@@ -216,6 +258,8 @@ def build_dashboard_export_payload(
     insights: Optional[PortfolioInsights] = None,
     factors: Optional[FactorExposureResult] = None,
     tca: Optional[TCAEstimateResult] = None,
+    factor_attribution: Optional[FactorAttributionResult] = None,
+    factor_attribution_preset: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Single JSON object for macro + optional portfolio analytics (TCA optional)."""
     out: Dict[str, Any] = {
@@ -228,4 +272,9 @@ def build_dashboard_export_payload(
         out["factor_exposure"] = factor_exposure_to_schema(factors).model_dump(mode="json")
     if tca is not None:
         out["tca_estimate"] = tca_to_schema(tca).model_dump(mode="json")
+    if factor_attribution is not None:
+        out["factor_attribution"] = factor_attribution_to_schema(
+            factor_attribution,
+            preset=factor_attribution_preset,
+        ).model_dump(mode="json")
     return out

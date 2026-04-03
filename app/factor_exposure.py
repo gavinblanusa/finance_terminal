@@ -8,7 +8,7 @@ from __future__ import annotations
 import io
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -18,6 +18,9 @@ from sklearn.linear_model import LinearRegression
 
 # Match portfolio_insights beta stability window
 MIN_OVERLAP_DAYS = 120
+
+# Minimum overlapping attribution days before we surface a chart (noisy below this)
+ATTR_MIN_DAYS = 5
 
 FF5_ZIP_URL = (
     "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/"
@@ -261,4 +264,272 @@ def build_factor_exposure(
         regression_start=reg_start,
         data_warnings=warnings,
         factors_available=True,
+    )
+
+
+def _fetch_years_for_span(need_start: pd.Timestamp) -> int:
+    """OHLCV lookback: cover estimation + attribution through today."""
+    now_ts = pd.Timestamp.now().normalize()
+    span_days = max(0, int((now_ts - need_start.normalize()).days))
+    return max(3, min(50, span_days // 365 + 2))
+
+
+def resolve_attribution_window(
+    ff: Optional[pd.DataFrame],
+    preset: str,
+    custom_start: Optional[date] = None,
+    custom_end: Optional[date] = None,
+) -> Tuple[Optional[date], Optional[date], List[str]]:
+    """
+    Map UI/API preset to inclusive calendar dates on the Ken French trading calendar.
+    Returns (start, end, warnings); (None, None, errors) if unusable.
+    """
+    warnings: List[str] = []
+    if ff is None or ff.empty:
+        return None, None, ["No factor calendar available."]
+    idx = ff.index.sort_values()
+    last = idx.max()
+    preset_l = (preset or "21").strip().lower()
+
+    if preset_l == "custom":
+        if custom_start is None or custom_end is None:
+            return None, None, ["Custom attribution requires start and end dates."]
+        if custom_start > custom_end:
+            return None, None, ["Attribution start is after end date."]
+        first_d = idx.min().date()
+        last_d = idx.max().date()
+        cs = max(custom_start, first_d)
+        ce = min(custom_end, last_d)
+        if cs > ce:
+            return None, None, ["Attribution window does not overlap the factor calendar."]
+        if cs > custom_start or ce < custom_end:
+            warnings.append("Attribution window clamped to factor calendar bounds.")
+        return cs, ce, warnings
+
+    if len(idx) < ATTR_MIN_DAYS:
+        return None, None, ["Factor history too short for attribution."]
+
+    if preset_l == "mtd":
+        month_start = last.replace(day=1)
+        mtd = idx[idx >= month_start]
+        if len(mtd) < ATTR_MIN_DAYS:
+            warnings.append("MTD window is short; attribution is noisy.")
+        return mtd[0].date(), mtd[-1].date(), warnings
+
+    if preset_l == "63":
+        n = 63
+    else:
+        n = 21
+        if preset_l != "21":
+            warnings.append(f"Unknown preset {preset!r}; using last {n} trading days.")
+
+    take = idx[-min(n, len(idx)) :]
+    if len(take) < n:
+        warnings.append(f"Using {len(take)} trading days (requested {n}).")
+    return take[0].date(), take[-1].date(), warnings
+
+
+@dataclass
+class FactorAttributionResult:
+    """Cumulative factor attribution vs value-weighted portfolio (estimation before window)."""
+
+    attribution_start: Optional[str]
+    attribution_end: Optional[str]
+    estimation_start: Optional[str]
+    estimation_end: Optional[str]
+    n_attribution_days: int
+    portfolio_alpha: float
+    portfolio_factor_betas: Dict[str, float]
+    cumulative_excess_return: float
+    cumulative_factor_contributions: Dict[str, float]
+    cumulative_alpha_component: float
+    cumulative_residual: float
+    data_warnings: List[str] = field(default_factory=list)
+    available: bool = False
+
+
+def build_factor_attribution(
+    positions: List[Dict[str, Any]],
+    fetch_ohlcv_fn: Callable[..., Optional[pd.DataFrame]],
+    attr_start: date,
+    attr_end: date,
+    period_years: int = 3,
+) -> FactorAttributionResult:
+    """
+    Estimate β and α on Ken French dates strictly before ``attr_start``; attribute
+    portfolio daily excess returns over [attr_start, attr_end] to Σ β_k F_{k,t} + α,
+    with residual = realized excess minus that explained component (constant weights).
+    """
+    warnings: List[str] = []
+    empty = FactorAttributionResult(
+        attribution_start=None,
+        attribution_end=None,
+        estimation_start=None,
+        estimation_end=None,
+        n_attribution_days=0,
+        portfolio_alpha=0.0,
+        portfolio_factor_betas={},
+        cumulative_excess_return=0.0,
+        cumulative_factor_contributions={},
+        cumulative_alpha_component=0.0,
+        cumulative_residual=0.0,
+        data_warnings=warnings,
+        available=False,
+    )
+
+    pairs: List[Tuple[str, float]] = []
+    for p in positions:
+        t = (p.get("ticker") or "").upper().strip()
+        v = float(p.get("current_value") or 0)
+        if t and v > 0:
+            pairs.append((t, v))
+    if not pairs:
+        warnings.append("No positions for attribution.")
+        return empty
+
+    total = sum(v for _, v in pairs)
+    if total <= 0:
+        return empty
+    weights = {t: v / total for t, v in pairs}
+
+    ff, w_ff = load_ff5_factors()
+    warnings.extend(w_ff)
+    if ff is None or ff.empty:
+        warnings.append("Fama-French factors unavailable.")
+        return empty
+
+    ts_a0 = pd.Timestamp(attr_start)
+    ts_a1 = pd.Timestamp(attr_end)
+    if ts_a0 > ts_a1:
+        warnings.append("Attribution start after end.")
+        return empty
+
+    prior = ff.index[ff.index < ts_a0]
+    if len(prior) == 0:
+        warnings.append("No factor dates before attribution start (cannot estimate loadings).")
+        return empty
+    est_end = prior.max()
+    est_start = est_end - pd.Timedelta(days=365 * int(period_years) + 30)
+    ff_est = ff.loc[(ff.index >= est_start) & (ff.index <= est_end)]
+
+    ff_attr = ff.loc[(ff.index >= ts_a0) & (ff.index <= ts_a1)]
+    if ff_attr.empty:
+        warnings.append("No factor rows in attribution window.")
+        return empty
+
+    need_start = min(ff_est.index.min(), ff_attr.index.min())
+    fetch_years = _fetch_years_for_span(need_start)
+
+    per_betas: Dict[str, Dict[str, float]] = {}
+    per_alpha: Dict[str, float] = {}
+    per_r2: Dict[str, float] = {}
+    per_n: Dict[str, int] = {}
+    included_weights: Dict[str, float] = {}
+    returns_map: Dict[str, pd.Series] = {}
+
+    for ticker, w in weights.items():
+        df = fetch_ohlcv_fn(ticker, fetch_years)
+        r = _returns_from_ohlcv(df)
+        if r is None:
+            warnings.append(f"{ticker}: insufficient OHLCV for attribution regression.")
+            continue
+        returns_map[ticker] = r
+        betas, r2, n_obs = _regress_one_ticker(r, ff_est)
+        if betas is None or r2 is None:
+            warnings.append(f"{ticker}: overlap with estimation factors < {MIN_OVERLAP_DAYS} days.")
+            continue
+        per_alpha[ticker] = float(betas.get("_alpha", 0.0))
+        clean = {k: v for k, v in betas.items() if k != "_alpha"}
+        per_betas[ticker] = clean
+        per_r2[ticker] = float(r2)
+        per_n[ticker] = int(n_obs)
+        if r2 < 0.05:
+            warnings.append(f"{ticker}: low R² ({r2:.2f}) — loadings noisy.")
+        included_weights[ticker] = w
+
+    sw = sum(included_weights.values())
+    if sw <= 0 or not included_weights:
+        warnings.append("No tickers produced an estimation-window regression.")
+        return FactorAttributionResult(
+            attribution_start=attr_start.isoformat(),
+            attribution_end=attr_end.isoformat(),
+            estimation_start=ff_est.index.min().strftime("%Y-%m-%d") if len(ff_est) else None,
+            estimation_end=est_end.strftime("%Y-%m-%d") if est_end is not None else None,
+            n_attribution_days=0,
+            portfolio_alpha=0.0,
+            portfolio_factor_betas={},
+            cumulative_excess_return=0.0,
+            cumulative_factor_contributions={},
+            cumulative_alpha_component=0.0,
+            cumulative_residual=0.0,
+            data_warnings=warnings,
+            available=False,
+        )
+
+    port_beta: Dict[str, float] = {f: 0.0 for f in FACTOR_COLS}
+    port_alpha = 0.0
+    for t, w in included_weights.items():
+        nw = w / sw
+        port_alpha += nw * per_alpha[t]
+        for f in FACTOR_COLS:
+            port_beta[f] += nw * per_betas[t][f]
+
+    common_dates: List[pd.Timestamp] = []
+    for d in ff_attr.index:
+        if all(d in returns_map[t].index for t in included_weights):
+            common_dates.append(d)
+
+    if len(common_dates) < ATTR_MIN_DAYS:
+        warnings.append(
+            f"Only {len(common_dates)} days with full book returns in window "
+            f"(need {ATTR_MIN_DAYS}+ for a stable strip)."
+        )
+        return FactorAttributionResult(
+            attribution_start=attr_start.isoformat(),
+            attribution_end=attr_end.isoformat(),
+            estimation_start=ff_est.index.min().strftime("%Y-%m-%d") if len(ff_est) else None,
+            estimation_end=est_end.strftime("%Y-%m-%d"),
+            n_attribution_days=len(common_dates),
+            portfolio_alpha=port_alpha,
+            portfolio_factor_betas=dict(port_beta),
+            cumulative_excess_return=0.0,
+            cumulative_factor_contributions={f: 0.0 for f in FACTOR_COLS},
+            cumulative_alpha_component=0.0,
+            cumulative_residual=0.0,
+            data_warnings=warnings,
+            available=False,
+        )
+
+    excess_list: List[float] = []
+    explained_list: List[float] = []
+    for d in common_dates:
+        r_p = sum((included_weights[t] / sw) * float(returns_map[t].loc[d]) for t in included_weights)
+        rf = float(ff.loc[d, "RF"])
+        excess_list.append(r_p - rf)
+        fac_part = sum(port_beta[f] * float(ff.loc[d, f]) for f in FACTOR_COLS)
+        explained_list.append(port_alpha + fac_part)
+
+    n_days = len(common_dates)
+    residual_list = [excess_list[i] - explained_list[i] for i in range(n_days)]
+    cum_fac: Dict[str, float] = {}
+    for f in FACTOR_COLS:
+        cum_fac[f] = port_beta[f] * sum(float(ff.loc[d, f]) for d in common_dates)
+    cum_alpha_comp = port_alpha * n_days
+    cum_excess = sum(excess_list)
+    cum_residual = sum(residual_list)
+
+    return FactorAttributionResult(
+        attribution_start=attr_start.isoformat(),
+        attribution_end=attr_end.isoformat(),
+        estimation_start=ff_est.index.min().strftime("%Y-%m-%d") if len(ff_est) else None,
+        estimation_end=est_end.strftime("%Y-%m-%d"),
+        n_attribution_days=n_days,
+        portfolio_alpha=port_alpha,
+        portfolio_factor_betas=dict(port_beta),
+        cumulative_excess_return=cum_excess,
+        cumulative_factor_contributions=cum_fac,
+        cumulative_alpha_component=cum_alpha_comp,
+        cumulative_residual=cum_residual,
+        data_warnings=warnings,
+        available=True,
     )

@@ -66,7 +66,7 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/tax_engine.py` | HIFO tax lot tracking, gain calculations, CSV import |
 | `app/macro_context.py` | Dashboard macro strip: cross-asset movers (yfinance), optional FRED rates |
 | `app/portfolio_insights.py` | Dashboard PORT-lite: sector weights, concentration, value-weighted beta vs SPY |
-| `app/factor_exposure.py` | Dashboard Fama–French 5-factor loadings (Ken French daily factors + OHLCV regressions) |
+| `app/factor_exposure.py` | Dashboard Fama–French 5-factor loadings + cumulative attribution strip (estimation vs attribution windows, residual) |
 | `app/tca_estimate.py` | Dashboard pre-trade impact estimate (ADV, participation, illustrative square-root heuristic) |
 | `app/data_schemas.py` | Pydantic JSON-ready views of macro, PORT, factor, TCA, options IV term; `build_dashboard_export_payload` for snapshot download |
 | `app/options_iv_term.py` | Market Analysis: ATM implied vol term structure from Yahoo option chains |
@@ -74,7 +74,7 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/fi_context.py` | Dashboard: credit/duration proxy strip (^TNX, HYG, LQD, TLT, IEF via Yahoo) |
 | `app/portfolio_snapshot.py` | Portfolio JSON dict for Streamlit + REST (shared with `terminal_api`) |
 | `app/analytics_export.py` | Compose macro + PORT + factors payload for REST |
-| `app/terminal_api.py` | FastAPI: `/v1/macro`, `/v1/fi`, `/v1/portfolio`, `/v1/analytics/dashboard` |
+| `app/terminal_api.py` | FastAPI: `/v1/macro`, `/v1/fi`, `/v1/portfolio`, `/v1/analytics/dashboard` (optional attribution query params) |
 | `app/relevant_news.py` | Dashboard ranked headlines across portfolio + watchlist |
 | `app/market_data.py` | OHLCV cache, valuation (P/E, revenue), TradingView-style signals, company profile/fundamentals/news |
 | `app/openbb_fetch.py` | OpenBB fetch kernel: lazy `obb`, provider chain, timeouts, `gft.openbb` logging |
@@ -109,8 +109,9 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 - **FI · proxies**: ^TNX, HYG, LQD, TLT, IEF last / day change (Yahoo)—duration and credit **tone**, not TRACE or live bonds (SRCH/YAS-lite)
 - **Portfolio risk snapshot**: sector allocation (from cached profiles), top-1 / top-5 / HHI concentration, value-weighted beta vs SPY (daily returns, ~6-month overlap)
 - **Factor exposure (PORT depth)**: Fama–French 5-factor portfolio loadings from [Ken French daily factors](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/Data_Library.html) (cached under `.market_cache/ff5_factors_daily.csv`); per-ticker table, optional heatmap for ≤15 names; educational / not a vendor risk model
+- **Factor attribution**: same model, but β/α are fixed from dates **before** your chosen window; cumulative factor + alpha + **residual** bars with presets (21 / 63 / MTD / custom). Not a desk P&L explainer, but an honest strip vs the French file.
 - **Pre-trade TCA (illustrative)**: participation vs recent ADV, realized vol, rough impact in bps and dollars—sizing intuition only, not a calibrated Almgren–Chriss or broker TCA product
-- **JSON snapshot download**: when you hold positions, **⬇ JSON snapshot** exports macro + PORT-lite + factor loadings; **includes last TCA run** from the same browser session after you use Execution · TCA (cleared on Refresh Prices)
+- **JSON snapshot download**: when you hold positions, **⬇ JSON snapshot** exports macro + PORT-lite + factor loadings + **factor_attribution** (same window as the dashboard control); **includes last TCA run** from the same browser session after you use Execution · TCA (cleared on Refresh Prices)
 - **Headlines for your book**: merged company news for portfolio + watchlist tickers, relevance-ranked (heuristic scoring)
 - Portfolio value and metrics overview
 - Unrealized gains/losses with real-time prices (via yfinance)

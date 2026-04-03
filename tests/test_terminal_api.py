@@ -123,6 +123,17 @@ def test_get_portfolio_200(mock_snap, client: TestClient, gft_key: str) -> None:
     assert r.json()["positions"] == []
 
 
+def test_get_dashboard_analytics_422_partial_attribution_dates(
+    client: TestClient, gft_key: str
+) -> None:
+    r = client.get(
+        "/v1/analytics/dashboard",
+        params={"attribution_start": "2024-01-01"},
+        headers=_auth_headers(gft_key),
+    )
+    assert r.status_code == 422
+
+
 @patch("terminal_api.build_rest_dashboard_payload")
 def test_get_dashboard_analytics_200(mock_dash, client: TestClient, gft_key: str) -> None:
     mock_dash.return_value = {"macro": {}, "snapshot": True}
@@ -133,7 +144,12 @@ def test_get_dashboard_analytics_200(mock_dash, client: TestClient, gft_key: str
     )
     assert r.status_code == 200
     assert r.json() == {"macro": {}, "snapshot": True}
-    mock_dash.assert_called_once_with(include_factors=False)
+    mock_dash.assert_called_once_with(
+        include_factors=False,
+        attribution_preset="21",
+        attribution_start=None,
+        attribution_end=None,
+    )
 
 
 @patch("options_iv_term.build_iv_term_structure")

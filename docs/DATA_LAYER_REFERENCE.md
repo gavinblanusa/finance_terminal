@@ -102,6 +102,37 @@ movers_df, rates_df = macro_context_to_dataframes(ctx)
 
 ---
 
+## `factor_exposure.build_factor_attribution`
+
+**Purpose:** **PORT-style attribution strip**: fix portfolio β and α using an **estimation** window that ends strictly **before** the attribution start (same OLS as loadings, different date slice on the French file). Over the **attribution** window, cumulate `β'F_t + α` per factor and **Alpha**, and report **Residual** as the sum of daily *(portfolio excess return − factor-explained)* (constant value weights).
+
+**Inputs:**
+
+- `positions`: same as `build_factor_exposure`
+- `fetch_ohlcv_fn(ticker, period_years)` — lookback is widened automatically when the attribution window starts far in the past
+- `attr_start`, `attr_end`: inclusive `datetime.date` bounds on the Ken French calendar
+- `period_years` (default 3): width of the estimation slice before `attr_start`
+
+| Output field | Type | Notes |
+|-------------|------|--------|
+| `attribution_start` / `attribution_end` | str (ISO) | Inclusive window used |
+| `estimation_start` / `estimation_end` | str or None | French dates in the β regression; `estimation_end` is strictly before attribution start |
+| `n_attribution_days` | int | Days where every included ticker has a return |
+| `portfolio_alpha` | float | Value-weighted OLS intercept (daily) |
+| `portfolio_factor_betas` | dict | Same keys as loadings, from the **estimation** slice |
+| `cumulative_excess_return` | float | Sum of daily portfolio excess returns |
+| `cumulative_factor_contributions` | dict | Per factor: `β_k × Σ F_{k,t}` over the window |
+| `cumulative_alpha_component` | float | `n_days × α` |
+| `cumulative_residual` | float | Sum of daily residuals |
+| `available` | bool | `False` if calendar/overlap/regression fails |
+| `data_warnings` | list[str] | Short overlap, missing OHLCV, etc. |
+
+**Helpers:** `resolve_attribution_window(ff, preset, …)` maps presets (`21`, `63`, `mtd`, `custom`) to dates; `ATTR_MIN_DAYS` = 5 minimum days for `available=True`.
+
+**Schema:** `FactorAttributionSchema` via `factor_attribution_to_schema` (optional `preset` on export).
+
+---
+
 ## `tca_estimate.estimate_trade_impact`
 
 **Purpose:** **Illustrative** pre-trade impact (TRA-lite): participation vs ADV and a square-root style cost heuristic (not a calibrated Almgren–Chriss broker model).
@@ -158,9 +189,9 @@ movers_df, rates_df = macro_context_to_dataframes(ctx)
 
 **Purpose:** One JSON object combining dashboard analytics for download (Dashboard **⬇ JSON snapshot** button).
 
-**Arguments:** `macro` (required), optional `insights`, `factors`, `tca`.
+**Arguments:** `macro` (required), optional `insights`, `factors`, `tca`, `factor_attribution`, `factor_attribution_preset`.
 
-**Output keys:** `generated_at_utc`, `macro`, and any of `portfolio_insights`, `factor_exposure`, `tca_estimate` when provided.
+**Output keys:** `generated_at_utc`, `macro`, and any of `portfolio_insights`, `factor_exposure`, `factor_attribution`, `tca_estimate` when provided. `factor_attribution` includes `preset` when the caller passes `factor_attribution_preset`.
 
 **Note:** The Dashboard download merges **`tca_estimate`** when the user has run **Execution · TCA** in the same Streamlit session (`st.session_state["gft_export_tca"]`). **Refresh Prices** clears that session key.
 
@@ -244,7 +275,7 @@ If `GFT_API_KEY` is unset, routes are open (local dev only—do not expose publi
 | GET | `/v1/macro` | `MacroContextSchema` JSON |
 | GET | `/v1/fi` | List of FI proxy rows (same columns as dashboard strip) |
 | GET | `/v1/portfolio` | Full portfolio snapshot dict (same as `fetch_portfolio_snapshot_dict`) or 503 |
-| GET | `/v1/analytics/dashboard?include_factors=true` | `build_dashboard_export_payload` shape (no session TCA) |
+| GET | `/v1/analytics/dashboard?include_factors=true&attribution_preset=21` | Same JSON as dashboard export (no session TCA). Optional `attribution_start` / `attribution_end` (YYYY-MM-DD, both required together) override the preset; `attribution_preset` is `21` / `63` / `mtd` when dates are omitted. |
 | GET | `/v1/options/iv-term?ticker=&spot=&max_expirations=12` | `IVTermStructureSchema` JSON |
 | POST | `/v1/analytics/tca` | Body `{"ticker","shares","side":"buy"\|"sell"}` → `TCASchema` |
 | POST | `/v1/options/black-scholes` | Body: `spot`, `strike`, `time_years`, `rate`, `volatility` (decimals), optional `dividend_yield` |

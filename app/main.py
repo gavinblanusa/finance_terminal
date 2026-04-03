@@ -13,7 +13,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import date
+from datetime import date, timedelta
 import html
 from decimal import Decimal
 from sqlalchemy.orm import Session
@@ -72,7 +72,13 @@ from portfolio_insights import build_portfolio_insights
 import yfinance as yf
 
 from data_schemas import build_dashboard_export_payload, tca_to_schema
-from factor_exposure import build_factor_exposure
+from factor_exposure import (
+    FactorAttributionResult,
+    build_factor_attribution,
+    build_factor_exposure,
+    load_ff5_factors,
+    resolve_attribution_window,
+)
 from fi_context import build_fi_context_strip, fi_rows_to_records
 from options_black_scholes import black_scholes_european
 from options_iv_term import build_iv_term_structure
@@ -80,7 +86,7 @@ from tca_estimate import estimate_trade_impact
 from portfolio_snapshot import fetch_portfolio_snapshot_dict
 from relevant_news import build_relevant_news
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Project root (caches at Invest/ root)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -124,6 +130,59 @@ def _cached_factor_exposure(
     _ = ff_cache_mtime
     positions = [{"ticker": t, "current_value": v} for t, v in positions_key]
     return build_factor_exposure(positions, fetch_ohlcv, period_years=3)
+
+
+def _empty_factor_attribution(warnings: List[str]) -> FactorAttributionResult:
+    return FactorAttributionResult(
+        attribution_start=None,
+        attribution_end=None,
+        estimation_start=None,
+        estimation_end=None,
+        n_attribution_days=0,
+        portfolio_alpha=0.0,
+        portfolio_factor_betas={},
+        cumulative_excess_return=0.0,
+        cumulative_factor_contributions={},
+        cumulative_alpha_component=0.0,
+        cumulative_residual=0.0,
+        data_warnings=list(warnings),
+        available=False,
+    )
+
+
+@st.cache_data(ttl=900, show_spinner="Loading factor attribution…")
+def _cached_factor_attribution(
+    positions_key: Tuple[Tuple[str, float], ...],
+    ff_cache_mtime: float,
+    preset: str,
+    custom_start_iso: str,
+    custom_end_iso: str,
+) -> FactorAttributionResult:
+    """Attribution window + ff_cache_mtime in the cache key (3A)."""
+    from dataclasses import replace
+
+    _ = ff_cache_mtime
+    positions: List[Dict[str, Any]] = [{"ticker": t, "current_value": v} for t, v in positions_key]
+    ff, w_ff = load_ff5_factors()
+    preset_l = (preset or "21").strip().lower()
+    if preset_l == "custom":
+        if not (custom_start_iso and custom_end_iso):
+            return _empty_factor_attribution(
+                list(w_ff) + ["Pick start and end dates for custom attribution."]
+            )
+        try:
+            cs = date.fromisoformat(custom_start_iso)
+            ce = date.fromisoformat(custom_end_iso)
+        except ValueError:
+            return _empty_factor_attribution(list(w_ff) + ["Invalid custom attribution dates."])
+        a0, a1, w_bounds = resolve_attribution_window(ff, "custom", cs, ce)
+    else:
+        a0, a1, w_bounds = resolve_attribution_window(ff, preset_l)
+    if a0 is None or a1 is None:
+        return _empty_factor_attribution(list(w_ff) + list(w_bounds))
+    fa = build_factor_attribution(positions, fetch_ohlcv, a0, a1, period_years=3)
+    merged = list(w_ff) + list(w_bounds) + list(fa.data_warnings)
+    return replace(fa, data_warnings=merged)
 
 
 @st.cache_data(ttl=900, show_spinner="Estimating trade impact…")
@@ -813,6 +872,7 @@ def dashboard_page():
             _cached_macro_context.clear()
             _cached_portfolio_insights.clear()
             _cached_factor_exposure.clear()
+            _cached_factor_attribution.clear()
             _cached_tca_estimate.clear()
             _cached_relevant_news.clear()
             _cached_fi_context_strip.clear()
@@ -832,7 +892,28 @@ def dashboard_page():
                 _macro_e = _cached_macro_context()
                 _ins_e = _cached_portfolio_insights(_pk)
                 _fe_e = _cached_factor_exposure(_pk, _ff_factors_cache_mtime())
-                _payload = build_dashboard_export_payload(_macro_e, _ins_e, _fe_e, None)
+                _preset = st.session_state.get("dash_attr_preset", "21")
+                _c0 = st.session_state.get("dash_attr_c0")
+                _c1 = st.session_state.get("dash_attr_c1")
+                _is_custom = str(_preset).strip().lower() == "custom"
+                _c0_iso = _c0.isoformat() if _is_custom and _c0 else ""
+                _c1_iso = _c1.isoformat() if _is_custom and _c1 else ""
+                _fa_e = _cached_factor_attribution(
+                    _pk,
+                    _ff_factors_cache_mtime(),
+                    str(_preset),
+                    _c0_iso,
+                    _c1_iso,
+                )
+                _preset_label = "custom" if str(_preset).lower() == "custom" else str(_preset)
+                _payload = build_dashboard_export_payload(
+                    _macro_e,
+                    _ins_e,
+                    _fe_e,
+                    None,
+                    factor_attribution=_fa_e,
+                    factor_attribution_preset=_preset_label,
+                )
                 if st.session_state.get("gft_export_tca"):
                     _payload["tca_estimate"] = st.session_state["gft_export_tca"]
                 st.download_button(
@@ -840,7 +921,7 @@ def dashboard_page():
                     data=json.dumps(_payload, indent=2, default=str),
                     file_name="gft_dashboard_snapshot.json",
                     mime="application/json",
-                    help="Macro, PORT-lite, Fama–French loadings; includes last TCA run from this session if present.",
+                    help="Macro, PORT-lite, Fama–French loadings and attribution strip; includes last TCA run from this session if present.",
                     key="dash_export_json",
                 )
             except Exception:
@@ -1062,6 +1143,14 @@ def dashboard_page():
                 "Kenneth French Data Library. Illustrative—not a buy-side risk engine.",
                 wrap_class="gft-dash-section-stack-research",
             )
+            st.markdown(
+                '<p class="gft-dash-msg gft-dash-msg-info" style="margin:0.35rem 0 0.85rem 0">'
+                "<strong class=\"gft-dash-msg-title\">Holdings vs exposures</strong> · "
+                "Sector weights describe what you own; factor loadings describe sensitivity to "
+                "systematic factors over the <em>estimation</em> window. They are not the same "
+                "coordinate system.</p>",
+                unsafe_allow_html=True,
+            )
             try:
                 fe = _cached_factor_exposure(positions_key, _ff_factors_cache_mtime())
                 if fe.data_warnings:
@@ -1107,10 +1196,115 @@ def dashboard_page():
                     )
                     st.plotly_chart(fig_f, use_container_width=True)
                     st.caption(
-                        f"Window: {fe.regression_start} → {fe.regression_end} · "
+                        f"Estimation window: {fe.regression_start} → {fe.regression_end} · "
                         "Ken French daily 5-factor (2×3) · as-of "
                         f"{fe.as_of or '—'}"
                     )
+                    st.markdown(
+                        '<p class="gft-fred-subhead" style="margin-top:1.1rem">Attribution</p>',
+                        unsafe_allow_html=True,
+                    )
+                    _attr_preset = st.selectbox(
+                        "Attribution window",
+                        options=["21", "63", "mtd", "custom"],
+                        format_func=lambda x: {
+                            "21": "Last 21 trading days",
+                            "63": "Last 63 trading days",
+                            "mtd": "Month to date",
+                            "custom": "Custom range",
+                        }[x],
+                        key="dash_attr_preset",
+                    )
+                    if _attr_preset == "custom":
+                        _ac1, _ac2 = st.columns(2)
+                        with _ac1:
+                            st.date_input(
+                                "Attribution start",
+                                value=date.today() - timedelta(days=30),
+                                key="dash_attr_c0",
+                            )
+                        with _ac2:
+                            st.date_input(
+                                "Attribution end",
+                                value=date.today(),
+                                key="dash_attr_c1",
+                            )
+                    _c0_iso_ui = ""
+                    _c1_iso_ui = ""
+                    if _attr_preset == "custom":
+                        _d0 = st.session_state.get("dash_attr_c0")
+                        _d1 = st.session_state.get("dash_attr_c1")
+                        _c0_iso_ui = _d0.isoformat() if _d0 else ""
+                        _c1_iso_ui = _d1.isoformat() if _d1 else ""
+                    _fa = _cached_factor_attribution(
+                        positions_key,
+                        _ff_factors_cache_mtime(),
+                        _attr_preset,
+                        _c0_iso_ui,
+                        _c1_iso_ui,
+                    )
+                    if _fa.data_warnings:
+                        st.caption("Attribution notes: " + " ".join(_fa.data_warnings[:6]))
+                    if _fa.available:
+                        _attr_items: List[Tuple[str, float]] = [
+                            (fn, float(_fa.cumulative_factor_contributions.get(fn, 0.0)))
+                            for fn in fe.factor_names
+                        ]
+                        _attr_items.append(("Alpha", float(_fa.cumulative_alpha_component)))
+                        _attr_items.append(("Residual", float(_fa.cumulative_residual)))
+                        _attr_items.sort(key=lambda x: abs(x[1]), reverse=True)
+                        _alabels = [x[0] for x in _attr_items]
+                        _avals = [x[1] for x in _attr_items]
+                        _acolors: List[str] = []
+                        for lb in _alabels:
+                            if lb == "Alpha":
+                                _acolors.append("#94a3b8")
+                            elif lb == "Residual":
+                                _acolors.append("#64748b")
+                            else:
+                                try:
+                                    _fi = fe.factor_names.index(lb)
+                                except ValueError:
+                                    _fi = 0
+                                _acolors.append(
+                                    GFT_DASH_CHART_PALETTE[_fi % len(GFT_DASH_CHART_PALETTE)]
+                                )
+                        fig_attr = go.Figure(
+                            go.Bar(
+                                x=_avals,
+                                y=_alabels,
+                                orientation="h",
+                                marker_color=_acolors,
+                                hovertemplate="%{y}: %{x:.4f} (cumulative)<extra></extra>",
+                            )
+                        )
+                        fig_attr.update_layout(
+                            title={
+                                "text": "Cumulative attribution vs factors + residual",
+                                "font": {"family": "Sora", "size": 15, "color": "#f8fafc"},
+                            },
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            font_color="#e2e8f0",
+                            font_family="IBM Plex Sans",
+                            xaxis=dict(
+                                gridcolor="rgba(148,163,184,0.12)",
+                                zeroline=True,
+                                zerolinecolor="rgba(248,250,252,0.35)",
+                                title="Cumulative contribution (decimal)",
+                            ),
+                            yaxis=dict(autorange="reversed", title=""),
+                            margin=dict(l=8, r=12, t=56, b=48),
+                        )
+                        st.plotly_chart(fig_attr, use_container_width=True)
+                        st.caption(
+                            f"Estimation (β fixed): {_fa.estimation_start} → {_fa.estimation_end} · "
+                            f"Attribution: {_fa.attribution_start} → {_fa.attribution_end} "
+                            f"({_fa.n_attribution_days} days). "
+                            "Residual = sum of daily (portfolio excess − factor-explained)."
+                        )
+                    elif not _fa.data_warnings:
+                        st.caption("Attribution unavailable for the selected window.")
                     wmap = {t: v for t, v in positions_key}
                     tickers_by_w = sorted(
                         fe.per_ticker_betas.keys(),

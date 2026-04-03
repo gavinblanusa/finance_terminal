@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.5.0] - 2026-04-03
+
+### Added
+
+- **Dashboard · Research · factors:** cumulative **attribution** strip (factor contributions + alpha + **residual**) with presets **21 / 63 / MTD / custom** dates; β/α come from Ken French dates **before** the attribution window. Callout clarifies holdings (sectors) vs factor exposures.
+- **JSON snapshot** and **`GET /v1/analytics/dashboard`:** optional **`factor_attribution`** block; API accepts **`attribution_preset`** or paired **`attribution_start`** / **`attribution_end`** (YYYY-MM-DD).
+- **Builders:** `factor_exposure.build_factor_attribution`, `resolve_attribution_window`, `FactorAttributionResult`; Pydantic **`FactorAttributionSchema`** in `data_schemas.py`.
+- **Tests:** `tests/test_factor_exposure.py`; dashboard API test for partial attribution dates (**422**).
+
+### Changed
+
+- **Docs:** `docs/DATA_LAYER_REFERENCE.md`, `docs/ARCHITECTURE.md`, **README**, **AGENTS**, **TODOS** (mark attribution tests shipped).
+
 ## [0.1.4.0] - 2026-04-02
 
 ### Added

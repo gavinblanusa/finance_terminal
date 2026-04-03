@@ -15,6 +15,7 @@ Interactive docs: http://127.0.0.1:8800/docs
 from __future__ import annotations
 
 import os
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -151,13 +152,27 @@ def get_portfolio(request: Request) -> Dict[str, Any]:
 def get_dashboard_analytics(
     request: Request,
     include_factors: bool = True,
+    attribution_preset: str = "21",
+    attribution_start: Optional[date] = None,
+    attribution_end: Optional[date] = None,
 ) -> Dict[str, Any]:
     """
     Macro + PORT-lite + optional Fama–French factors (same JSON shape as dashboard export,
-    without per-session TCA).
+    without per-session TCA). Optional ``attribution_start`` / ``attribution_end`` (inclusive,
+    YYYY-MM-DD) override ``attribution_preset`` when both are set.
     """
+    if (attribution_start is None) ^ (attribution_end is None):
+        raise HTTPException(
+            status_code=422,
+            detail="attribution_start and attribution_end must be supplied together",
+        )
     try:
-        return build_rest_dashboard_payload(include_factors=include_factors)
+        return build_rest_dashboard_payload(
+            include_factors=include_factors,
+            attribution_preset=attribution_preset,
+            attribution_start=attribution_start,
+            attribution_end=attribution_end,
+        )
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
 

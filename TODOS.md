@@ -17,7 +17,7 @@ Backlog from OpenBB data-layer design (`~/.gstack/projects/gavinblanusa-finance_
 
 From `~/.gstack/projects/gavinblanusa-finance_terminal/gavinblanusa-main-design-20260402-203520.md` plus `/plan-eng-review` + `/plan-design-review`:
 
-- **Unit tests for factor + attribution:** Ship in the same PR as attribution (`tests/test_factor_exposure.py`, synthetic OHLCV + factor panel). Not deferred.
+- **Unit tests for factor + attribution:** **Done in v0.1.5.0:** `tests/test_factor_exposure.py` (synthetic factor panel + attribution arithmetic).
 - **Scenario replay (historical shock / preset dates):** Deferred past v1 attribution. Implement after factor contribution + residual are stable; use SPY, ^TNX, HYG as labeled proxies only; document “illustrative, not desk stress.”
 
 ## Morning stack / autoplan deferrals (2026-04-02)
