@@ -80,3 +80,4 @@
 |------|----------|-----------|
 | 2026-03-31 | Initial DESIGN.md from /design-consultation | Codifies existing Sora + Plex + amber terminal direction; adds JetBrains Mono target for tabular data |
 | 2026-03-31 | Keep Streamlit `primaryColor` blue | Avoid full widget retheme until intentional; amber owns branded sections |
+| 2026-04-02 | Research · factors attribution strip | Horizontal bars for factor contribution + residual; presets 21/63 TD + MTD + custom; same research band classes; no mockups (plan-design-review, tool off) |

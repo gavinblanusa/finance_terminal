@@ -13,6 +13,13 @@ Backlog from OpenBB data-layer design (`~/.gstack/projects/gavinblanusa-finance_
 3. **Inventory drift guard (optional)**  
    **Done:** `scripts/verify_openbb_coverage_doc.py` (CI job `openbb-doc-registry`) ensures every multi-provider chain in `openbb_provider_registry.py` appears in `docs/OPENBB_COVERAGE.md`.
 
+## PORT-lite / factor attribution (2026-04-02)
+
+From `~/.gstack/projects/gavinblanusa-finance_terminal/gavinblanusa-main-design-20260402-203520.md` plus `/plan-eng-review` + `/plan-design-review`:
+
+- **Unit tests for factor + attribution:** Ship in the same PR as attribution (`tests/test_factor_exposure.py`, synthetic OHLCV + factor panel). Not deferred.
+- **Scenario replay (historical shock / preset dates):** Deferred past v1 attribution. Implement after factor contribution + residual are stable; use SPY, ^TNX, HYG as labeled proxies only; document “illustrative, not desk stress.”
+
 ## Morning stack / autoplan deferrals (2026-04-02)
 
 From `docs/plans/morning-stack-approach-b.md` (Approach B implementation + CEO/design review notes):
