@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.6.0] - 2026-04-04
+
+### Added
+
+- **Optional local OHLCV from [market-data-warehouse](https://github.com/joemccann/market-data-warehouse):** `app/market_warehouse.py` reads bronze Parquet (`GFT_MARKET_WAREHOUSE_BRONZE` → `asset_class=equity/symbol={TICKER}/data.parquet`) and/or DuckDB (`GFT_MARKET_WAREHOUSE_DUCKDB`, `md.equities_daily`). Wired into `market_data.fetch_ohlcv` after the JSON cache miss and before OpenBB. Uses **adj_close** as `Close`; logs row count and max bar date; configurable I/O timeout (`GFT_MARKET_WAREHOUSE_TIMEOUT_SEC`).
+- **Dependency:** `pyarrow>=14.0.0` for Parquet reads.
+- **Tests:** `tests/test_market_warehouse.py`.
+- **Docs:** README, `docs/ARCHITECTURE.md`, `docs/DATA_LAYER_REFERENCE.md`, `.env.example`; implementation plan `docs/plans/PLAN-mdw-warehouse-adapter.md`.
+- **TODOS:** deferred items for Approach B (authoritative lake, staleness UI, cache bypass).
+
 ## [0.1.5.0] - 2026-04-03
 
 ### Added

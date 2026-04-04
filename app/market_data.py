@@ -493,6 +493,20 @@ def fetch_ohlcv(ticker: str, period_years: int | str = 2) -> Optional[pd.DataFra
         end_date = end_dt.date()
         days_needed = years * 365
 
+    # Optional local MDW (joemccann/market-data-warehouse Parquet / DuckDB), after JSON cache miss
+    try:
+        from market_warehouse import (
+            ohlcv_df_sufficient_for_request,
+            try_load_ohlcv_from_warehouse,
+        )
+
+        wh = try_load_ohlcv_from_warehouse(ticker, start_date, end_date)
+        if ohlcv_df_sufficient_for_request(wh, start_date, end_date, period_years):
+            _save_to_cache(ticker, wh)
+            return wh
+    except ImportError:
+        pass
+
     # Try OpenBB first (when available)
     df = None
     try:

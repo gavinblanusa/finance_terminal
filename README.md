@@ -77,6 +77,7 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/terminal_api.py` | FastAPI: `/v1/macro`, `/v1/fi`, `/v1/portfolio`, `/v1/analytics/dashboard` (optional attribution query params) |
 | `app/relevant_news.py` | Dashboard ranked headlines across portfolio + watchlist |
 | `app/market_data.py` | OHLCV cache, valuation (P/E, revenue), TradingView-style signals, company profile/fundamentals/news |
+| `app/market_warehouse.py` | Optional local OHLCV from [market-data-warehouse](https://github.com/joemccann/market-data-warehouse) (Parquet bronze or DuckDB) when env vars set |
 | `app/openbb_fetch.py` | OpenBB fetch kernel: lazy `obb`, provider chain, timeouts, `gft.openbb` logging |
 | `app/openbb_provider_registry.py` | Provider try-order per dataset (`OPENBB_PROVIDER_CHAINS`); drift-checked vs `docs/OPENBB_COVERAGE.md` |
 | `app/openbb_adapter.py` | OpenBB data layer (normalization + fallbacks; uses `openbb_fetch`) |
@@ -184,7 +185,7 @@ This section gives future AIs and refactors enough context to navigate the codeb
 | Portfolio aggregation, tax summary | `tax_engine.py` (`TaxEngine`, `get_portfolio_summary`) | Reads `Trades` from DB via session passed in |
 | Dashboard macro strip, PORT-lite, ranked news | `macro_context.py`, `portfolio_insights.py`, `relevant_news.py`, `main.py` (`_cached_*`) | Movers: yfinance; rates: FRED if key set; sectors/profiles: `get_company_profile`; beta: `fetch_ohlcv` + SPY; news: `fetch_company_news` per ticker |
 | Trade CRUD, lots, CSV import | `main.py` (portfolio_taxes_page) + `tax_engine.py` (HIFO, `import_trades_from_csv`) | Trades stored in `models.Trades` |
-| OHLCV fetch, cache, indicators | `market_data.py` (`fetch_ohlcv`, …), `openbb_adapter.py` | OpenBB first, then yfinance, then `api_clients`; file cache `.market_cache/` |
+| OHLCV fetch, cache, indicators | `market_data.py` (`fetch_ohlcv`, …), `market_warehouse.py` (optional), `openbb_adapter.py` | JSON cache `.market_cache/`; optional MDW Parquet/DuckDB if env set; then OpenBB, yfinance, `api_clients` |
 | Valuation (P/E, revenue) | `market_data.py` (`fetch_valuation_data`, …) | DB table `valuation_history`; also Alpha Vantage / Finnhub / FMP |
 | Company profile, fundamentals, news | `market_data.py` (`get_company_profile`, `get_fundamentals_ratios`, `fetch_company_news`), `financetoolkit_adapter.py`, `openbb_adapter.py` | Fundamentals: FinanceToolkit first when enabled, then OpenBB, then FMP; profile/news: OpenBB then FMP/Finnhub; profile/fundamentals use DB cache |
 | Single-ticker price (tax/portfolio) | `tax_engine.py` (`fetch_single_price`, `get_cached_price`), `openbb_adapter.py` | OpenBB quote first, then yfinance + Alpha Vantage + `api_clients`; in-memory cache 15 min |
@@ -212,6 +213,9 @@ Load from `.env` in project root. Used by:
 | `PEERS_COUNTRY` | `market_data.py` | Optional. Restrict competitor screener to country (e.g. `US`). |
 | `PEERS_EXCHANGE` | `market_data.py` | Optional. Restrict competitor screener to exchange (e.g. `NASDAQ,NYSE`). |
 | `FRED_API_KEY` | `macro_context.py`, `openbb_adapter.fetch_macro_data_openbb` (via OpenBB when `USE_OPENBB=true`) | Optional. Enables Dashboard rates panel (DGS10, DGS2, 3M bill, EFFR, 10Y–2Y) and macro indicator series through OpenBB `fred_series` with pandas_datareader fallback. [Get a key](https://fred.stlouisfed.org/docs/api/api_key.html) (free). |
+| `GFT_MARKET_WAREHOUSE_BRONZE` | `market_warehouse.py` | Optional. Absolute path to MDW `data-lake/bronze` (parent of `asset_class=equity`). Reads `symbol={TICKER}/data.parquet`. Requires `pyarrow`. |
+| `GFT_MARKET_WAREHOUSE_DUCKDB` | `market_warehouse.py` | Optional. Path to `market.duckdb` (MDW analytical file). Queries `md.equities_daily` + `md.symbols`. Requires `duckdb` (`pip install duckdb`). Tried after bronze if bronze misses. |
+| `GFT_MARKET_WAREHOUSE_TIMEOUT_SEC` | `market_warehouse.py` | Optional. Per-attempt I/O timeout in seconds (default `5`, max `60`). |
 
 **OpenBB:** The app uses OpenBB as the primary data layer when available (OHLCV, quote, profile, fundamentals, news, IPO prices). `.env` is loaded when `openbb_fetch` is imported (via the adapter). Provider order, caches, and consumers are tracked in **`docs/OPENBB_COVERAGE.md`**. After installing or removing OpenBB provider extensions, run `openbb-build` to refresh the Python interface.
 
