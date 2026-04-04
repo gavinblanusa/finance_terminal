@@ -11,5 +11,6 @@ This folder holds implementation notes and architecture docs left for **future A
 | **PROJECT_LEARNINGS.md** | You want the gstack **`/learn`** snapshot: patterns, pitfalls, and architecture notes from cross-session logs (live source under `~/.gstack/projects/<slug>/`; see **AGENTS.md** for `scripts/gstack-learnings.sh`). |
 | **MARKET_ANALYSIS_DATA_REFACTOR.md** | You’re working on Market Analysis data: cache/DB-first behavior, auto-save for valuation and TradingView, or rate-limit handling. It’s a refactor plan from a prior session; valuation and TradingView auto-save are implemented—checklist is partially outdated. |
 | **OPEN_SOURCE_REPOS.md** | You're adding or evaluating an open source tool for analysis, data (market/SEC/IPO), or display. Lists repos with install, fit in the project, integration notes, and suggested implementation order. |
+| **plans/** (`docs/plans/`) | gstack **/autoplan** or **/office-hours** artifacts: approved implementation plans (for example MDW OHLCV adapter). Not required reading unless you are executing that plan. |
 
 Root README **“For AI and refactors”** remains the single best first stop for entry points, env vars, and where key logic lives.

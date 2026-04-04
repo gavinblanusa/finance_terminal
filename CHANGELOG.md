@@ -6,11 +6,11 @@ All notable changes to this project are documented here. Version format: `MAJOR.
 
 ### Added
 
-- **Optional local OHLCV from [market-data-warehouse](https://github.com/joemccann/market-data-warehouse):** `app/market_warehouse.py` reads bronze Parquet (`GFT_MARKET_WAREHOUSE_BRONZE` → `asset_class=equity/symbol={TICKER}/data.parquet`) and/or DuckDB (`GFT_MARKET_WAREHOUSE_DUCKDB`, `md.equities_daily`). Wired into `market_data.fetch_ohlcv` after the JSON cache miss and before OpenBB. Uses **adj_close** as `Close`; logs row count and max bar date; configurable I/O timeout (`GFT_MARKET_WAREHOUSE_TIMEOUT_SEC`).
-- **Dependency:** `pyarrow>=14.0.0` for Parquet reads.
+- **Local warehouse OHLCV (optional):** If you use [market-data-warehouse](https://github.com/joemccann/market-data-warehouse), set `GFT_MARKET_WAREHOUSE_BRONZE` and/or `GFT_MARKET_WAREHOUSE_DUCKDB` so daily bars load from bronze Parquet (`asset_class=equity/symbol={TICKER}/data.parquet`) or DuckDB (`md.equities_daily`) **before** OpenBB and yfinance. Implementation: `app/market_warehouse.py` in `fetch_ohlcv` after the JSON cache miss; **adj_close** maps to `Close`; logs row count and max bar date; `GFT_MARKET_WAREHOUSE_TIMEOUT_SEC` caps I/O wait.
+- **Dependency:** `pyarrow>=14.0.0` (Parquet reads).
 - **Tests:** `tests/test_market_warehouse.py`.
-- **Docs:** README, `docs/ARCHITECTURE.md`, `docs/DATA_LAYER_REFERENCE.md`, `.env.example`; implementation plan `docs/plans/PLAN-mdw-warehouse-adapter.md`.
-- **TODOS:** deferred items for Approach B (authoritative lake, staleness UI, cache bypass).
+- **Docs / plan:** README, `docs/ARCHITECTURE.md`, `docs/DATA_LAYER_REFERENCE.md`, `.env.example`, `docs/plans/PLAN-mdw-warehouse-adapter.md`.
+- **TODOS:** Approach B deferrals (authoritative lake, staleness UI, cache bypass).
 
 ## [0.1.5.0] - 2026-04-03
 
