@@ -20,6 +20,15 @@ From `~/.gstack/projects/gavinblanusa-finance_terminal/gavinblanusa-main-design-
 - **Unit tests for factor + attribution:** **Done in v0.1.5.0:** `tests/test_factor_exposure.py` (synthetic factor panel + attribution arithmetic).
 - **Scenario replay (historical shock / preset dates):** Deferred past v1 attribution. Implement after factor contribution + residual are stable; use SPY, ^TNX, HYG as labeled proxies only; document “illustrative, not desk stress.”
 
+## Market data warehouse (2026-04-04)
+
+From `docs/plans/PLAN-mdw-warehouse-adapter.md` (**Approach B** deferred per /autoplan):
+
+- **Lake as authoritative OHLCV tier** (network backfill admin-only, single source of truth, Streamlit refresh tied to MDW `daily_update`).
+- **User-visible staleness** (max bar date when warehouse serves data).
+- **Schema/version contract** with pinned MDW release + fixture contract tests.
+- **Optional cache bypass** when warehouse enabled (4h JSON cache hiding fresher Parquet).
+
 ## Morning stack / autoplan deferrals (2026-04-02)
 
 From `docs/plans/morning-stack-approach-b.md` (Approach B implementation + CEO/design review notes):
