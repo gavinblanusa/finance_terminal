@@ -143,7 +143,7 @@ The tax engine uses **Highest-In-First-Out (HIFO)** methodology:
 - **Options · Black–Scholes**: European call/put **theory** prices from spot/strike/DTE/IV; risk-free default from ^TNX (cached); optional preset rows from the IV table above (`scipy`)
 - **Ticker search** with OHLCV cache (file + optional DB), valuation history (PostgreSQL-first)
 - **Price chart**: Primary chart is TradingView-style via `streamlit_lightweight_charts` and `chart_utils` (candlestick + volume); Plotly is used for the TradingView signals chart and rescaling.
-- **Valuation chart**: P/E and revenue over time (yfinance, Alpha Vantage, Finnhub, FMP)
+- **Valuation & DCF**: P/E and revenue over time (yfinance, Alpha Vantage, Finnhub, FMP), combined with a **Discounted Cash Flow (DCF)** baseline tool extracting WACC and FCF estimates directly from financial statements.
 - **TradingView-style signals**: Stochastic RSI, momentum, supply/demand zones; cached per ticker/timeframe
 - **Competitors**: Peer comparison (same industry + similar market cap via FMP screener); optional sort by description similarity; user overrides (add/remove peers) stored in DB; table with ticker, name, sector, industry, market cap, P/E, revenue TTM. Optional env: `PEERS_COUNTRY`, `PEERS_EXCHANGE`.
 - Company profile, fundamentals, and news (FMP, Finnhub)

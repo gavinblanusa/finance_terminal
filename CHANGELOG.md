@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.7.0] - 2026-04-16
+
+### Added
+
+- **Market Analysis DCF**: Discounted Cash Flow (DCF) baseline module for valuation. Automatically computes Free Cash Flow (FCF) with cash flow statement fallbacks, fetches WACC inputs including risk-free rate (`^TNX` proxy) and cost of debt, and renders a visual DCF summary including a Plotly waterfall chart for model inputs versus target price.
+- **Fundamentals fallback**: Caches basic growth estimates from the `info` proxy or defaults to 2% terminal growth when missing, establishing boundaries to prevent UI breaks.
+
 ## [0.1.6.0] - 2026-04-04
 
 ### Added
