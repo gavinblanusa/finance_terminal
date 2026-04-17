@@ -3829,6 +3829,152 @@ def market_analysis_page():
                         "This may be due to limited financial disclosures or the stock being too new."
                     )
                 
+                # === DCF SANDBOX ===
+                st.markdown("---")
+                st.markdown("### Discounted Cash Flow (DCF)")
+                st.caption("Auto-populated with Wall Street consensus and historical data. Adjust assumptions to see real-time implied value.")
+                
+                with st.spinner("Loading DCF baseline data..."):
+                    from market_data import _cached_get_dcf_baseline
+                    dcf_baseline = _cached_get_dcf_baseline(ticker_input)
+                
+                if not dcf_baseline:
+                    st.info("Some baseline metrics could not be fetched. Please input them manually below.")
+                    dcf_baseline = {}
+                
+                # Check for negative cash flow exception
+                initial_fcf = dcf_baseline.get('fcf')
+                has_negative_fcf = initial_fcf is not None and initial_fcf < 0
+                if has_negative_fcf:
+                    st.warning(f"Company has negative trailing FCF (${initial_fcf:,.0f}). DCF model requires forward-looking positive cash flow assumptions. Defaulting to 0.")
+                    initial_fcf = 0.0
+                
+                dcf_col1, dcf_col2 = st.columns([1, 2])
+                with dcf_col1:
+                    st.markdown("#### Input Assumptions")
+                    with st.container(border=True):
+                        def_fcf = float(initial_fcf) if initial_fcf else 0.0
+                        def_growth = float(dcf_baseline.get('growth_y1_5', 0.02)) * 100
+                        def_wacc = float(dcf_baseline.get('wacc', 0.10)) * 100
+                        
+                        user_fcf = st.number_input("Initial FCF (TTM) $", value=def_fcf, format="%.0f", step=1000000.0)
+                        user_g_1_5 = st.slider("Growth Y1-5 (%)", min_value=-20.0, max_value=100.0, value=def_growth, step=0.5)
+                        user_g_6_10 = st.slider("Growth Y6-10 (%)", min_value=-20.0, max_value=50.0, value=max(2.0, def_growth/2), step=0.5)
+                        
+                        # Dynamic max for terminal growth (must be < WACC)
+                        wacc_limit = max(1.0, def_wacc - 0.5)
+                        user_tg = st.slider("Terminal Growth (%)", min_value=0.0, max_value=min(5.0, wacc_limit), value=2.5, step=0.1)
+                        user_wacc = st.slider("WACC / Discount Rate (%)", min_value=max(user_tg + 0.1, 5.0), max_value=25.0, value=def_wacc, step=0.1, help=f"Auto-calculated at {def_wacc:.1f}% using CAPM")
+                        
+                with dcf_col2:
+                    st.markdown("#### Valuation Output")
+                    shares = dcf_baseline.get('shares_outstanding')
+                    debt = dcf_baseline.get('total_debt', 0.0)
+                    cash = dcf_baseline.get('total_cash', 0.0)
+                    current_price = dcf_baseline.get('current_price') or summary.get('current_price')
+                    
+                    if not shares or shares <= 0:
+                        st.info("Missing shares outstanding. Showing Enterprise Value only.")
+                    
+                    # Math Engine
+                    wacc_dec = user_wacc / 100.0
+                    g1_dec = user_g_1_5 / 100.0
+                    g2_dec = user_g_6_10 / 100.0
+                    tg_dec = user_tg / 100.0
+                    
+                    cf_projections = []
+                    pv_cfs = []
+                    current_cf = user_fcf
+                    
+                    # Years 1-5
+                    for t in range(1, 6):
+                        current_cf *= (1 + g1_dec)
+                        cf_projections.append(current_cf)
+                        pv_cfs.append(current_cf / ((1 + wacc_dec) ** t))
+                        
+                    # Years 6-10
+                    for t in range(6, 11):
+                        current_cf *= (1 + g2_dec)
+                        cf_projections.append(current_cf)
+                        pv_cfs.append(current_cf / ((1 + wacc_dec) ** t))
+                        
+                    pv_10yr_fcf = sum(pv_cfs)
+                    fcf_yr10 = cf_projections[-1] if cf_projections else 0.0
+                    
+                    # Terminal Value
+                    if wacc_dec > tg_dec:
+                        terminal_value = (fcf_yr10 * (1 + tg_dec)) / (wacc_dec - tg_dec)
+                        pv_tv = terminal_value / ((1 + wacc_dec) ** 10)
+                    else:
+                        pv_tv = 0.0
+                        
+                    enterprise_value = pv_10yr_fcf + pv_tv
+                    equity_value = enterprise_value + cash - debt
+                    
+                    implied_price = equity_value / shares if shares and shares > 0 else 0.0
+                    
+                    # Headline Metric
+                    if implied_price > 0 and current_price and current_price > 0:
+                        delta = (implied_price - current_price) / current_price
+                        delta_color = "normal" if delta >= 0 else "inverse"
+                        st.markdown("""
+                            <style>
+                            [data-testid="stMetricValue"] { font-family: 'Monaco', monospace; font-size: 42px !important; }
+                            </style>
+                        """, unsafe_allow_html=True)
+                        st.metric("DCF Implied Price", f"${implied_price:.2f}", f"{delta*100:+.1f}% vs Current (${current_price:.2f})", delta_color=delta_color)
+                    elif enterprise_value > 0 or enterprise_value < 0:
+                        st.metric("Implied Enterprise Value", f"${enterprise_value:,.0f}", None)
+                        
+                    # Plotly Waterfall
+                    if enterprise_value != 0:
+                        # Scale down massive numbers for cleaner display
+                        scale = 1
+                        suffix = ""
+                        max_val = max(abs(enterprise_value), abs(equity_value))
+                        if max_val >= 1e12:
+                            scale = 1e12
+                            suffix = "T"
+                        elif max_val >= 1e9:
+                            scale = 1e9
+                            suffix = "B"
+                        elif max_val >= 1e6:
+                            scale = 1e6
+                            suffix = "M"
+                            
+                        waterfall = go.Figure(go.Waterfall(
+                            orientation="v",
+                            measure=["relative", "relative", "relative", "relative", "total"],
+                            x=["10Y FCF (PV)", "Terminal (PV)", "Cash", "Debt", "Equity"],
+                            textposition="outside",
+                            text=[
+                                f"${pv_10yr_fcf/scale:,.1f}{suffix}",
+                                f"${pv_tv/scale:,.1f}{suffix}",
+                                f"${cash/scale:,.1f}{suffix}",
+                                f"-${debt/scale:,.1f}{suffix}",
+                                f"${equity_value/scale:,.1f}{suffix}"
+                            ],
+                            textfont=dict(family='Monaco, monospace', size=11, color='#8b949e'),
+                            y=[pv_10yr_fcf, pv_tv, cash, -debt, equity_value],
+                            connector={"line":{"color":"#30363d"}},
+                            decreasing={"marker":{"color":"#ff073a"}},
+                            increasing={"marker":{"color":"#00ff41"}},
+                            totals={"marker":{"color":"#1f77b4"}}
+                        ))
+                        
+                        waterfall.update_layout(
+                            title=None,
+                            waterfallgap=0.3,
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            margin=dict(t=30, b=40, l=10, r=10),
+                            height=350,
+                            showlegend=False,
+                            xaxis=dict(showgrid=False, zeroline=False, tickfont=dict(color='#8b949e')),
+                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
+                        )
+                        st.plotly_chart(waterfall, use_container_width=True, config={'displayModeBar': False})
+                
                 # === FUNDAMENTALS AND RATIOS (expander) ===
                 try:
                     fundamentals = _cached_get_fundamentals_ratios(ticker_input)

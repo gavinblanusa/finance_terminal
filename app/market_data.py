@@ -4131,3 +4131,221 @@ def clear_peers_cache(ticker: Optional[str] = None):
             except OSError:
                 pass
 
+
+# =============================================================================
+# DCF Sandbox Data Pipelines
+# =============================================================================
+
+def _fetch_fcf_from_yfinance(stock, ticker: str) -> Optional[float]:
+    """
+    Fetch Free Cash Flow (FCF) with an aggressive fallback cascade.
+    1. Operating Cash Flow + CapEx (from cashflow)
+    2. Net Income (from income_stmt, assuming CapEx ~ D&A)
+    3. Alpha Vantage EPS * Shares Outstanding
+    """
+    try:
+        # 1. Cashflow Statement
+        cf = stock.cashflow
+        if cf is not None and not cf.empty:
+            # yfinance returns recent dates as columns
+            col_data = cf.iloc[:, 0]
+            
+            # yfinance keys vary: 'Operating Cash Flow', 'Total Cash From Operating Activities', 'Net Cash Provided By Operating Activities'
+            op_cf = None
+            capex = None
+            for key in ['Operating Cash Flow', 'Free Cash Flow', 'Total Cash From Operating Activities', 'Net Cash Provided By Operating Activities']:
+                if key in col_data.index and pd.notna(col_data[key]):
+                    if key == 'Free Cash Flow':
+                        # Perfect, yfinance already gave us FCF
+                        return float(col_data[key])
+                    op_cf = col_data[key]
+                    break
+            
+            for key in ['Capital Expenditure', 'Net PPE Purchase And Sale', 'Investments In Property Plant And Equipment']:
+                if key in col_data.index and pd.notna(col_data[key]):
+                    capex = col_data[key]
+                    break
+            
+            if op_cf is not None and capex is not None:
+                # Note: CapEx is typically negative, so we add it if it's negative
+                capex_val = capex if capex < 0 else -capex
+                fcf = op_cf + capex_val
+                print(f"[{ticker}] FCF calculated from cashflow: {fcf}")
+                return float(fcf)
+            elif op_cf is not None:
+                print(f"[{ticker}] Missing CapEx, using Operating CF as proxy: {op_cf}")
+                return float(op_cf)
+                
+        # 2. Fallback to Income Statement (Net Income)
+        inc = stock.income_stmt
+        if inc is not None and not inc.empty:
+            col_data = inc.iloc[:, 0]
+            for key in ['Net Income', 'Net Income Common Stockholders']:
+                if key in col_data.index and pd.notna(col_data[key]):
+                    net_in = col_data[key]
+                    print(f"[{ticker}] FCF fallback to Net Income: {net_in}")
+                    return float(net_in)
+                    
+        # 3. Fallback to Alpha Vantage EPS
+        info = stock.info
+        shares = info.get('sharesOutstanding') or info.get('impliedSharesOutstanding')
+        trailing_eps = info.get('trailingEps')
+        if shares and trailing_eps:
+            net_in_proxy = float(shares) * float(trailing_eps)
+            print(f"[{ticker}] FCF fallback to EPS * Shares: {net_in_proxy}")
+            return net_in_proxy
+            
+    except Exception as e:
+        print(f"[{ticker}] Error fetching FCF: {e}")
+        
+    return None
+
+import streamlit as st
+
+def _fetch_wacc_inputs(stock, ticker: str) -> dict:
+    """
+    Fetch WACC components. 
+    Risk-Free Rate: ^TNX (10yr Treasury)
+    Beta: stock.info['beta']
+    Cost of Debt: Interest Expense / Total Debt
+    """
+    wacc_inputs = {
+        'risk_free_rate': 0.042,  # 4.2% fallback
+        'beta': 1.0,              # Market average fallback
+        'cost_of_debt': 0.05,     # 5.0% fallback
+        'total_debt': 0.0,
+        'tax_rate': 0.21          # 21% corp tax fallback
+    }
+    
+    # Risk-free rate via TNX
+    try:
+        tnx = yf.Ticker('^TNX')
+        tnx_price = tnx.history(period="1d")['Close'].iloc[-1]
+        if tnx_price and tnx_price > 0:
+            wacc_inputs['risk_free_rate'] = float(tnx_price) / 100.0
+            print(f"[{ticker}] Risk-free rate fetched: {wacc_inputs['risk_free_rate']}")
+    except Exception as e:
+        print(f"[{ticker}] Error fetching ^TNX, using fallback {wacc_inputs['risk_free_rate']}: {e}")
+
+    info = stock.info
+    
+    # Beta
+    beta = info.get('beta')
+    if beta:
+        wacc_inputs['beta'] = float(beta)
+        
+    # Total Debt
+    total_debt = info.get('totalDebt')
+    if total_debt:
+        wacc_inputs['total_debt'] = float(total_debt)
+        
+    # Cost of debt and tax rate from income statement
+    try:
+        inc = stock.income_stmt
+        if inc is not None and not inc.empty:
+            col_data = inc.iloc[:, 0]
+            
+            int_exp = None
+            for key in ['Interest Expense', 'Interest Expense Non Operating']:
+                if key in col_data.index and pd.notna(col_data[key]):
+                    int_exp = abs(float(col_data[key]))
+                    break
+                    
+            if int_exp and total_debt and total_debt > 0:
+                cost_of_debt = int_exp / float(total_debt)
+                # Sanity check cost of debt between 1% and 20%
+                if 0.01 <= cost_of_debt <= 0.20:
+                    wacc_inputs['cost_of_debt'] = cost_of_debt
+                    
+            # Tax rate: Tax Provision / Pretax Income
+            tax_prov = col_data.get('Tax Provision')
+            pretax = col_data.get('Pretax Income')
+            if pd.notna(tax_prov) and pd.notna(pretax) and pretax > 0:
+                tax_rate = abs(float(tax_prov)) / float(pretax)
+                if 0.0 <= tax_rate <= 0.40:
+                    wacc_inputs['tax_rate'] = tax_rate
+                    
+    except Exception as e:
+        print(f"[{ticker}] Error calculating Cost of Debt/Tax Rate: {e}")
+
+    return wacc_inputs
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_get_dcf_baseline(ticker: str) -> Optional[dict]:
+    """
+    Master orchestrator bounding the TTM FCF, WACC inputs, Total Cash, Total Debt, 
+    Shares Outstanding, and Analyst Growth Estimates into a payload.
+    """
+    ticker = ticker.upper().strip()
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        if not info:
+            return None
+            
+        # 1. FCF
+        fcf = _fetch_fcf_from_yfinance(stock, ticker)
+        
+        # 2. WACC Inputs
+        wacc_inputs = _fetch_wacc_inputs(stock, ticker)
+        
+        # Calculate standard WACC if we have components
+        # WACC = (E/V * Re) + (D/V * Rd * (1 - Tc))
+        # Where Re = Rf + Beta * ERP
+        erp = 0.055  # 5.5% Equity Risk Premium
+        cost_of_equity = wacc_inputs['risk_free_rate'] + (wacc_inputs['beta'] * erp)
+        
+        shares = info.get('sharesOutstanding') or info.get('impliedSharesOutstanding')
+        price = info.get('currentPrice') or info.get('regularMarketPrice')
+        
+        market_cap = None
+        if shares and price:
+            market_cap = float(shares) * float(price)
+        else:
+            market_cap = info.get('marketCap')
+            if market_cap and price:
+                shares = float(market_cap) / float(price)
+                
+        total_debt = wacc_inputs['total_debt']
+        total_cash = info.get('totalCash', 0.0)
+        
+        calculated_wacc = 0.10  # 10% Absolute fallback
+        if market_cap:
+            v_total = market_cap + total_debt
+            weight_e = market_cap / v_total if v_total > 0 else 1.0
+            weight_d = total_debt / v_total if v_total > 0 else 0.0
+            rd_after_tax = wacc_inputs['cost_of_debt'] * (1 - wacc_inputs['tax_rate'])
+            calculated_wacc = (weight_e * cost_of_equity) + (weight_d * rd_after_tax)
+            # Bound WACC between 5% and 25%
+            calculated_wacc = max(0.05, min(0.25, calculated_wacc))
+            
+        # 3. Growth Estimates
+        # Fallback cascade: analyst earningsGrowth -> Alpha Vantage proxy -> 2.0%
+        growth_y1_5 = 0.02
+        earnings_growth = info.get('earningsGrowth')
+        if earnings_growth and earnings_growth > -0.5:
+            growth_y1_5 = float(earnings_growth)
+        else:
+            growth_y1_5 = 0.05 if fcf and fcf > 0 else 0.02
+            
+        # Hardcap growth so UI doesn't break initially
+        growth_y1_5 = max(-0.20, min(1.0, growth_y1_5))
+        
+        return {
+            'fcf': fcf,
+            'shares_outstanding': shares,
+            'current_price': price,
+            'total_debt': total_debt,
+            'total_cash': total_cash,
+            'growth_y1_5': growth_y1_5,
+            'wacc': calculated_wacc,
+            'beta': wacc_inputs['beta'],
+            'risk_free_rate': wacc_inputs['risk_free_rate']
+        }
+        
+    except Exception as e:
+        print(f"[{ticker}] Error building DCF baseline: {e}")
+        return None
+
