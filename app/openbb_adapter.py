@@ -486,12 +486,16 @@ def fetch_historical_price_openbb(ticker: str, target_date: date) -> Optional[fl
     Fetch closing price on or near target_date from OpenBB. Used for IPO vintage price.
     """
     try:
+        from datetime import datetime, timedelta
+        import pandas as pd
+        start_date = target_date - timedelta(days=7)
+        end_date = target_date + timedelta(days=7)
 
         def invoke(obb: Any, provider: str) -> Any:
             return obb.equity.price.historical(
                 symbol=ticker,
-                start_date=target_date.isoformat(),
-                end_date=target_date.isoformat(),
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
                 provider=provider,
             )
 
@@ -506,6 +510,7 @@ def fetch_historical_price_openbb(ticker: str, target_date: date) -> Optional[fl
         df = res.data.to_df()
         if df is None or df.empty:
             return None
+            
         close_col = None
         for c in df.columns:
             if str(c).lower() == "close":
@@ -513,7 +518,17 @@ def fetch_historical_price_openbb(ticker: str, target_date: date) -> Optional[fl
                 break
         if close_col is None:
             return None
-        val = df[close_col].dropna().iloc[-1]
+            
+        if df.index.tz is not None:
+            df.index = pd.to_datetime(df.index).tz_localize(None)
+        target_dt = datetime.combine(target_date, datetime.min.time())
+        valid_dates = df[df.index <= target_dt]
+        
+        if valid_dates.empty:
+            val = df[close_col].dropna().iloc[0]
+        else:
+            val = valid_dates[close_col].dropna().iloc[-1]
+            
         if val is not None and float(val) > 0:
             return float(val)
         return None

@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+
+## [0.1.7.1] - 2026-04-18
+
+### Fixed
+- **IPO Data Integrity:** Fixed `fetch_historical_price_openbb` to use a 14-day lookback window. This ensures it successfully fetches the correct historical IPO debut price rather than silently defaulting to the current market price.
+
+### Added
+- **Clickable Company Links:** Transformed the "Company" column in both the Horizon and Registry tables into direct, clickable links to official company sites.
+  - Fetches the official website dynamically via `yfinance` caching.
+  - Automatically falls back to a targeted Google Search if an official URL isn't available.
+
 ## [0.1.7.0] - 2026-04-16
 
 ### Added

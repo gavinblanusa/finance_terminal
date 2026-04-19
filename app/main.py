@@ -281,6 +281,20 @@ def _cached_get_13f_filings_for_institution(cik: str):
     return get_13f_filings_for_institution(cik)
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def _cached_get_company_website(ticker: str, company_name: str) -> str:
+    import urllib.parse
+    try:
+        import yfinance as yf
+        url = yf.Ticker(ticker).info.get("website")
+        if url:
+            return url
+    except Exception:
+        pass
+    query = urllib.parse.quote_plus(f"{company_name}")
+    return f"https://www.google.com/search?q={query}"
+
+
 @st.cache_data(ttl=900, show_spinner="Loading 13F holdings…")
 def _cached_get_13f_holdings_by_quarter(cik: str, year: int, quarter: int):
     return get_13f_holdings_by_quarter(cik, year, quarter)
@@ -4859,6 +4873,7 @@ def ipo_tracker_page():
         if upcoming_ipos:
             # Create DataFrame for display
             ipo_data = []
+            import urllib.parse
             for ipo in upcoming_ipos:
                 price_range = "TBD"
                 if ipo.price_range_low and ipo.price_range_high:
@@ -4869,9 +4884,14 @@ def ipo_tracker_page():
                 shares_str = f"{ipo.shares_offered:,}" if ipo.shares_offered else "TBD"
                 days_until = (ipo.ipo_date - date.today()).days
                 
+                company_disp = ipo.name[:40] + '...' if len(ipo.name) > 40 else ipo.name
+                query = urllib.parse.quote_plus(f"{ipo.name}")
+                search_url = f"https://www.google.com/search?q={query}"
+                company_val = f"{search_url}#_{company_disp}"
+                
                 ipo_data.append({
                     'Ticker': ipo.ticker,
-                    'Company': ipo.name[:40] + '...' if len(ipo.name) > 40 else ipo.name,
+                    'Company': company_val,
                     'Exchange': ipo.exchange,
                     'Date': ipo.ipo_date.strftime('%Y-%m-%d'),
                     'Days Until': days_until,
@@ -4886,7 +4906,7 @@ def ipo_tracker_page():
                 hide_index=True,
                 column_config={
                     "Ticker": st.column_config.TextColumn("Ticker", width="small"),
-                    "Company": st.column_config.TextColumn("Company", width="medium"),
+                    "Company": st.column_config.LinkColumn("Company", width="medium", display_text=".*#_(.*)"),
                     "Exchange": st.column_config.TextColumn("Exchange", width="small"),
                     "Date": st.column_config.TextColumn("Listing Date", width="small"),
                     "Days Until": st.column_config.NumberColumn("Days Until", width="small"),
@@ -5081,10 +5101,14 @@ def ipo_tracker_page():
                                 return f"{ret:+.2f}%"
                             return "N/A"
 
+                        company_disp = entry['Company'][:25] + '...' if len(entry['Company']) > 25 else entry['Company']
+                        website_url = _cached_get_company_website(entry['Ticker'], entry['Company'])
+                        company_val = f"{website_url}#_{company_disp}"
+
                         display_data.append({
                             "Rank": str(entry["Rank"]),
                             'Ticker': entry['Ticker'],
-                            'Company': entry['Company'][:25] + '...' if len(entry['Company']) > 25 else entry['Company'],
+                            'Company': company_val,
                             'IPO Date': entry['IPO Date'],
                             'IPO Price': f"${entry['IPO Price']:.2f}",
                             'Current': f"${entry['Current Price']:.2f}",
@@ -5101,7 +5125,7 @@ def ipo_tracker_page():
                         column_config={
                             "Rank": st.column_config.TextColumn("Rank", width="small"),
                             "Ticker": st.column_config.TextColumn("Ticker", width="small"),
-                            "Company": st.column_config.TextColumn("Company", width="medium"),
+                            "Company": st.column_config.LinkColumn("Company", width="medium", display_text=".*#_(.*)"),
                             "IPO Date": st.column_config.TextColumn("IPO Date", width="small"),
                             "IPO Price": st.column_config.TextColumn("IPO $", width="small"),
                             "Current": st.column_config.TextColumn("Now $", width="small"),
