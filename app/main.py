@@ -3172,7 +3172,7 @@ def create_tradingview_chart(df: pd.DataFrame, ticker: str, timeframe: str = '1W
             x=0.5
         ),
         hovermode='x unified',
-        height=900,
+        height=600,
         margin=dict(l=60, r=80, t=80, b=40),
         xaxis_rangeslider_visible=False
     )
@@ -3333,37 +3333,897 @@ def market_analysis_page():
             summary = _cached_get_ticker_summary(ticker_input)
             
             if summary:
-                # === KEY METRICS ROW ===
-                st.markdown("### Current status")
+                # === GLOBAL ANCHOR HEADER ===
+                st.markdown(f"### {ticker_input} Overview")
+                head_col1, head_col2 = st.columns([4, 1])
+                with head_col1:
                 
-                m1, m2, m3, m4, m5 = st.columns(5)
+                    m1, m2, m3, m4, m5 = st.columns(5)
                 
-                with m1:
-                    st.metric(
-                        "Price",
-                        f"${summary['current_price']:,.2f}",
-                        f"{summary['daily_change_pct']:+.2f}%",
-                        delta_color="normal" if summary['daily_change'] >= 0 else "inverse"
+                    with m1:
+                        st.metric(
+                            "Price",
+                            f"${summary['current_price']:,.2f}",
+                            f"{summary['daily_change_pct']:+.2f}%",
+                            delta_color="normal" if summary['daily_change'] >= 0 else "inverse"
+                        )
+                
+                    with m2:
+                        rsi_val = summary["rsi"]
+                        rsi_zone = "oversold" if rsi_val < 30 else "overbought" if rsi_val > 70 else "neutral"
+                        st.metric("RSI (14)", f"{rsi_val:.1f}", delta=rsi_zone, delta_color="off")
+                
+                    with m3:
+                        st.metric("SMA 50", f"${summary['sma_50']:,.2f}" if summary['sma_50'] else "N/A")
+                
+                    with m4:
+                        st.metric("SMA 200", f"${summary['sma_200']:,.2f}" if summary['sma_200'] else "N/A")
+                
+                    with m5:
+                        st.metric("Trend", summary["trend"])
+                
+                with head_col2:
+                    st.markdown('### Current signal')
+                    st.markdown(get_signal_badge(summary['signal']), unsafe_allow_html=True)
+                st.markdown("---")
+                # === TABBED LAYOUT ===
+                tab_tech, tab_val, tab_corp = st.tabs(["Technicals", "Valuation", "Corporate Activity"])
+
+                with tab_tech:
+                    # === DUAL CHART ===
+                    st.markdown("### Technical chart")
+                
+                    # Trading days per year for tail slicing
+                    TRADING_DAYS_PER_YEAR = 252
+                    time_range_options = ['3M', '6M', '1Y', '2Y', '5Y', '10Y', '15Y', '25Y', '50Y', 'Max', 'Custom']
+                    date_range = st.selectbox(
+                        "Time Range",
+                        options=time_range_options,
+                        index=3,
+                        help="Select the time range to display"
                     )
+                    chart_type = "line" if st.checkbox("Line chart (close only)", value=False, help="Show closing price as a line instead of candlesticks.") else "candlestick"
+                    show_signals = st.checkbox(
+                        "Show buy/sell signals",
+                        value=True,
+                        help="Show BUY/SELL and cross markers on the price chart.",
+                    )
+                    strong_signals_only = st.checkbox(
+                        "Strong signals only",
+                        value=False,
+                        help="When on, only show BUY when RSI < 25 and SELL when RSI > 75 (fewer markers).",
+                    )
+
+                    if date_range == 'Custom':
+                        from datetime import timedelta as _td
+                        _today = date.today()
+                        _default_start = _today - _td(days=365)
+                        custom_col1, custom_col2 = st.columns(2)
+                        with custom_col1:
+                            custom_start = st.date_input("Start date", value=_default_start, key="tech_chart_start")
+                        with custom_col2:
+                            custom_end = st.date_input("End date", value=_today, key="tech_chart_end")
+                        if custom_start and custom_end and custom_start <= custom_end:
+                            df_display = df[(df.index.date >= custom_start) & (df.index.date <= custom_end)]
+                            if df_display.empty:
+                                st.warning("No data in the selected date range.")
+                                df_display = df.tail(TRADING_DAYS_PER_YEAR)
+                        else:
+                            df_display = df.tail(TRADING_DAYS_PER_YEAR)
+                    elif date_range == '3M':
+                        df_display = df.tail(63)
+                    elif date_range == '6M':
+                        df_display = df.tail(126)
+                    elif date_range == '1Y':
+                        df_display = df.tail(TRADING_DAYS_PER_YEAR)
+                    elif date_range == '2Y':
+                        df_display = df.tail(TRADING_DAYS_PER_YEAR * 2)
+                    elif date_range == '5Y':
+                        df_display = df.tail(TRADING_DAYS_PER_YEAR * 5)
+                    elif date_range == '10Y':
+                        df_display = df.tail(TRADING_DAYS_PER_YEAR * 10)
+                    elif date_range == '15Y':
+                        df_display = df.tail(TRADING_DAYS_PER_YEAR * 15)
+                    elif date_range == '25Y':
+                        df_display = df.tail(TRADING_DAYS_PER_YEAR * 25)
+                    elif date_range == '50Y':
+                        df_display = df.tail(TRADING_DAYS_PER_YEAR * 50)
+                    else:
+                        df_display = df
                 
-                with m2:
-                    rsi_val = summary["rsi"]
-                    rsi_zone = "oversold" if rsi_val < 30 else "overbought" if rsi_val > 70 else "neutral"
-                    st.metric("RSI (14)", f"{rsi_val:.1f}", delta=rsi_zone, delta_color="off")
+                    # Edge-case captions: data shorter than requested; SMA 200 partial
+                    if not df_display.empty and date_range not in ('Custom', 'Max'):
+                        expected_days = {
+                            '5Y': TRADING_DAYS_PER_YEAR * 5, '10Y': TRADING_DAYS_PER_YEAR * 10,
+                            '15Y': TRADING_DAYS_PER_YEAR * 15, '25Y': TRADING_DAYS_PER_YEAR * 25,
+                            '50Y': TRADING_DAYS_PER_YEAR * 50,
+                        }
+                        expected = expected_days.get(date_range)
+                        if expected and len(df_display) < expected * 0.9:
+                            first_ts = df_display.index.min()
+                            first_str = first_ts.strftime("%Y-%m-%d") if hasattr(first_ts, "strftime") else str(first_ts)[:10]
+                            st.caption(f"Data from {first_str} (all available).")
+                    if len(df) < 200:
+                        st.caption("SMA 200 is shown with partial data (fewer than 200 trading days).")
                 
-                with m3:
-                    st.metric("SMA 50", f"${summary['sma_50']:,.2f}" if summary['sma_50'] else "N/A")
+                    # Insider transactions for chart overlay (optional)
+                    insider_list = []
+                    try:
+                        insider_list = _cached_fetch_insider_transactions(ticker_input)
+                    except Exception:
+                        pass
+                    # TradingView Lightweight Charts: candlestick or line + volume + support lines + markers + RSI (zoom + double-click reset)
+                    tech_data = df_to_technical_chart_data(df_display, strong_signals_only=strong_signals_only)
+                    # Show markers when user wants any signals: all (show_signals) or strong-only (strong_signals_only)
+                    markers_to_show = (tech_data["markers"] or None) if (show_signals or strong_signals_only) else None
+                    chart_config = build_technical_chart_config(
+                        ticker_input,
+                        tech_data["candles"],
+                        tech_data["volume"],
+                        dark_theme=True,
+                        rsi=tech_data["rsi"] or None,
+                        sma_50=tech_data["sma_50"] or None,
+                        sma_200=tech_data["sma_200"] or None,
+                        bb_upper=tech_data["bb_upper"] or None,
+                        bb_lower=tech_data["bb_lower"] or None,
+                        markers=markers_to_show,
+                        price_series_type=chart_type,
+                    )
+                    renderLightweightCharts(chart_config, key=f"technical_chart_{ticker_input}")
+
+                    with st.expander("Chart guide — lines and signals", expanded=False):
+                        st.markdown("""
+                        Use **Line chart (close only)** to show closing price as a line instead of candlesticks.
+                        **Show buy/sell signals** = all markers. **Strong signals only** = only stricter signals (BUY when RSI &lt; 25, SELL when RSI &gt; 75). You can use either or both.
+
+                        **Price panel**
+                        | Line / marker | Meaning |
+                        |----------------|---------|
+                        | **Blue line** | SMA 50 (50-day simple moving average) |
+                        | **Orange line** | SMA 200 (200-day simple moving average) |
+                        | **Gray dotted lines** | Bollinger Bands (upper and lower) |
+                        | **Green ↑** | Buy signal (price &lt; lower band and RSI &lt; 35) |
+                        | **Red ↓** | Sell signal (price &gt; upper band and RSI &gt; 65) |
+                        | **Gold dot** | Golden cross (SMA 50 crosses above SMA 200) |
+                        | **Dark red dot** | Death cross (SMA 50 crosses below SMA 200) |
+                        | **Green/teal bars** | Volume (lower section) |
+
+                        **RSI panel:** Purple line = RSI (14). Values above 70 = overbought; below 30 = oversold.
+                        """)
+                    # === RECENT SIGNALS TABLE ===
+                    st.markdown("---")
+                    st.markdown("### Recent signals")
                 
-                with m4:
-                    st.metric("SMA 200", f"${summary['sma_200']:,.2f}" if summary['sma_200'] else "N/A")
+                    recent_signals = df[df['Signal'] != ''].tail(10).copy()
+                    if not recent_signals.empty:
+                        recent_signals = recent_signals[['Close', 'RSI_14', 'SMA_50', 'SMA_200', 'Signal']].copy()
+                        recent_signals.columns = ['Price', 'RSI', 'SMA 50', 'SMA 200', 'Signal']
+                        recent_signals = recent_signals.round(2)
+                        recent_signals.index = recent_signals.index.strftime('%Y-%m-%d')
+                        recent_signals = recent_signals.iloc[::-1]  # Most recent first
+                    
+                        st.dataframe(
+                            _gft_tabular_styler(recent_signals),
+                            use_container_width=True,
+                            column_config={
+                                "Signal": st.column_config.TextColumn("Signal", width="medium"),
+                                "Price": st.column_config.NumberColumn("Price", format="$%.2f"),
+                                "RSI": st.column_config.NumberColumn("RSI", format="%.1f"),
+                                "SMA 50": st.column_config.NumberColumn("SMA 50", format="$%.2f"),
+                                "SMA 200": st.column_config.NumberColumn("SMA 200", format="$%.2f"),
+                            },
+                        )
+                    else:
+                        st.info("No trading signals generated in the selected period.")
                 
-                with m5:
-                    st.metric("Trend", summary["trend"])
+                    # === TRADINGVIEW-STYLE CHART ===
+                    st.markdown("---")
+                    st.markdown("### TradingView-style analysis")
+                    st.caption("Multi-panel momentum analysis with supply/demand zones and trading signals.")
                 
-                # === COMPANY PROFILE (expander) ===
-                try:
-                    profile = _cached_get_company_profile(ticker_input)
-                    with st.expander("Company profile", expanded=False):
+                    # Timeframe selector for TradingView chart
+                    tv_col1, tv_col2 = st.columns([1, 4])
+                    with tv_col1:
+                        tv_timeframe = st.selectbox(
+                            "Timeframe",
+                            options=['1W', '1D', '4H'],
+                            index=0,
+                            key="tv_timeframe",
+                            help="Select chart timeframe"
+                        )
+                
+                    # Determine data to display based on timeframe
+                    # For weekly, resample daily data to weekly
+                    if tv_timeframe == '1W':
+                        # Resample to weekly data
+                        df_tv = df.copy()
+                        df_tv_resampled = df_tv.resample('W').agg({
+                            'Open': 'first',
+                            'High': 'max',
+                            'Low': 'min',
+                            'Close': 'last',
+                            'Volume': 'sum'
+                        }).dropna()
+                        # Take last 52 weeks (1 year)
+                        df_tv_display = df_tv_resampled.tail(52)
+                        timeframe_label = '1W'
+                    elif tv_timeframe == '4H':
+                        # For 4H, use daily data but show more recent period
+                        df_tv_display = df.tail(60)  # ~60 days
+                        timeframe_label = '4H (Daily proxy)'
+                    else:  # 1D
+                        df_tv_display = df.tail(126)  # 6 months daily
+                        timeframe_label = '1D'
+                
+                    # Use cached TradingView signals if fresh; otherwise compute and auto-save
+                    df_tv_with_signals = load_tv_signals_from_cache(ticker_input, tv_timeframe)
+                    if df_tv_with_signals is None:
+                        df_tv_with_signals = calculate_tradingview_signals(df_tv_display)
+                        save_tv_signals_to_cache(ticker_input, df_tv_with_signals, tv_timeframe)
+                
+                    # Create and display TradingView chart
+                    tv_fig = create_tradingview_chart(df_tv_with_signals, ticker_input, timeframe_label)
+                    st.plotly_chart(tv_fig, use_container_width=True, config={
+                        'scrollZoom': True,
+                        'displayModeBar': True,
+                        'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraseshape'],
+                        'toImageButtonOptions': {
+                            'format': 'png',
+                            'filename': f'{ticker_input}_tradingview_{tv_timeframe}',
+                            'height': 900,
+                            'width': 1400,
+                            'scale': 2
+                        }
+                    })
+                
+                    # Show current signal status
+                    tv_signal_col1, tv_signal_col2, tv_signal_col3 = st.columns(3)
+                
+                    with tv_signal_col1:
+                        current_momentum = df_tv_with_signals['TV_Momentum'].iloc[-1] if 'TV_Momentum' in df_tv_with_signals.columns else 0
+                        st.metric("Momentum", f"{current_momentum:.1f}")
+                
+                    with tv_signal_col2:
+                        current_osc = df_tv_with_signals['TV_Oscillator'].iloc[-1] if 'TV_Oscillator' in df_tv_with_signals.columns else 0
+                        st.metric("Oscillator", f"{current_osc:.1f}")
+                
+                    with tv_signal_col3:
+                        # Get latest TV signal
+                        tv_signals = df_tv_with_signals[df_tv_with_signals['TV_Signal'] != '']
+                        if not tv_signals.empty:
+                            latest_tv_signal = tv_signals['TV_Signal'].iloc[-1]
+                            latest_tv_strength = tv_signals['TV_Signal_Strength'].iloc[-1]
+                            st.metric("Latest signal", f"{latest_tv_signal} ({latest_tv_strength})")
+                        else:
+                            st.metric("Latest signal", "None")
+                
+                    # TradingView chart interpretation guide
+                    with st.expander("TradingView chart guide"):
+                        st.markdown("""
+                        **Top Panel - Momentum Oscillator (-50 to +50):**
+                        - Combines Stochastic RSI and Rate of Change
+                        - **Cyan fill**: Positive momentum (bullish)
+                        - **Pink fill**: Negative momentum (bearish)
+                        - **Pink diamonds**: Potential sell signals at peaks
+                    
+                        **Middle Panel - Price Action:**
+                        - **Cyan/Teal candles**: Bullish (close > open)
+                        - **Pink/Red candles**: Bearish (close < open)
+                        - **Pink shaded zones**: Supply (upper) and Demand (lower) zones
+                        - **Gold line**: 50-period moving average support
+                        - **Cyan diamonds**: Buy signals
+                        - **Pink diamonds**: Sell signals
+                    
+                        **Bottom Panel - Secondary Oscillator (-40 to +40):**
+                        - MACD-style momentum histogram
+                        - Confirms signals from top panel
+                        - **Cyan diamonds**: Buy confirmation
+                    
+                        **Signal Logic:**
+                        | Condition | Signal Type |
+                        |-----------|-------------|
+                        | Price at demand zone + both oscillators negative turning up | **STRONG BUY** |
+                        | Price near lower band + momentum turning up | **MODERATE BUY** |
+                        | Price at supply zone + both oscillators positive turning down | **STRONG SELL** |
+                        | Price near upper band + momentum turning down | **MODERATE SELL** |
+                    
+                        **"Triple Blue" Alignment:**
+                        When price, momentum, and oscillator are all positive/bullish simultaneously, this indicates strong upward momentum.
+                        """)
+                
+                    # Save button for TradingView signals
+                    tv_cache_status = check_tv_signals_in_cache(ticker_input, tv_timeframe)
+                
+                    tv_save_col1, tv_save_col2 = st.columns([3, 1])
+                    with tv_save_col1:
+                        if tv_cache_status['has_data']:
+                            tv_note = "Fresh" if tv_cache_status["is_fresh"] else "Stale"
+                            cache_time = (
+                                tv_cache_status["timestamp"].strftime("%Y-%m-%d %H:%M")
+                                if tv_cache_status["timestamp"]
+                                else "Unknown"
+                            )
+                            st.caption(
+                                f"**{tv_note}:** **{ticker_input}** TradingView signals cached (saved: {cache_time})"
+                            )
+                        else:
+                            st.caption(f"**{ticker_input}** TradingView signals not saved yet")
+                
+                    with tv_save_col2:
+                        if tv_cache_status['is_fresh']:
+                            st.success("Cached")
+                        else:
+                            if st.button("Save TV signals", key=f"save_tv_{ticker_input}_{tv_timeframe}", help="Save TradingView signals to cache"):
+                                if save_tv_signals_to_cache(ticker_input, df_tv_with_signals, tv_timeframe):
+                                    st.success(f"Saved TradingView signals for {ticker_input}")
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to save TradingView signals.")
+                
+                with tab_val:
+                    # === VALUATION CHART ===
+                    st.markdown("---")
+                    st.markdown("### Valuation analysis")
+                    st.caption("P/E Multiple and Revenue Growth trends help assess if a stock is fairly valued relative to its growth.")
+                
+                    # Time range selector and optional refetch for valuation chart
+                    val_time_col1, val_time_col2 = st.columns([1, 4])
+                    with val_time_col1:
+                        valuation_years = st.selectbox(
+                            "Time Range",
+                            options=[2, 5, 10],
+                            index=0,
+                            format_func=lambda x: f"{x} Years",
+                            key="valuation_time_range",
+                            help="Select historical time range for valuation analysis"
+                        )
+                        # Force refetch from API (skip DB) to get best-available P/E from all sources
+                        refetch_key = f"valuation_refetch_{ticker_input}"
+                        if st.button("Refetch from API", key=refetch_key, help="Skip database and fetch fresh P/E and revenue from APIs (best available data)"):
+                            st.session_state["valuation_skip_db"] = True
+                
+                    skip_db = st.session_state.pop("valuation_skip_db", False)
+                    with st.spinner(f"Loading {valuation_years}-year valuation data..." + (" (from API)" if skip_db else "")):
+                        valuation_data = _cached_get_valuation_chart_data(ticker_input, valuation_years, skip_db)
+                
+                    if valuation_data:
+                        # Show key valuation metrics
+                        val_col1, val_col2, val_col3, val_col4, val_col5 = st.columns(5)
+                    
+                        with val_col1:
+                            pe_val = valuation_data['current_pe']
+                            if pe_val:
+                                pe_band = "lower" if pe_val < 20 else "mid" if pe_val < 35 else "elevated"
+                                st.metric("Current P/E", f"{pe_val:.1f}x", delta=pe_band, delta_color="off")
+                            else:
+                                st.metric("Current P/E", "N/A")
+                    
+                        with val_col2:
+                            fwd_pe = valuation_data['forward_pe']
+                            if fwd_pe:
+                                st.metric("Forward P/E", f"{fwd_pe:.1f}x")
+                            else:
+                                st.metric("Forward P/E", "N/A")
+                    
+                        with val_col3:
+                            peg = valuation_data.get('peg_ratio')
+                            earnings_growth = valuation_data.get('earnings_growth')
+                        
+                            if peg and peg > 0:
+                                # Color code PEG ratio
+                                # < 1 = potentially undervalued, 1-2 = fair, > 2 = expensive
+                                if peg < 1:
+                                    peg_label = "Undervalued"
+                                elif peg < 2:
+                                    peg_label = "Fair"
+                                else:
+                                    peg_label = "Expensive"
+                                st.metric(
+                                    "PEG Ratio",
+                                    f"{peg:.2f}",
+                                    peg_label,
+                                    delta_color="off",
+                                )
+                            elif earnings_growth:
+                                # Show earnings growth instead if PEG unavailable (no delta = no arrow)
+                                growth_pct = earnings_growth * 100
+                                st.metric(
+                                    "Earnings Growth (YoY)",
+                                    f"{growth_pct:+.1f}%",
+                                    delta=None,
+                                    delta_color="off",
+                                )
+                            else:
+                                st.metric("PEG Ratio", "N/A")
+                    
+                        with val_col4:
+                            sector = valuation_data.get('sector')
+                            st.metric("Sector", sector if sector else "N/A")
+                    
+                        with val_col5:
+                            industry = valuation_data.get('industry')
+                            st.metric("Industry", industry[:18] + "..." if industry and len(industry) > 18 else (industry or "N/A"))
+                    
+                        # Second row: Market cap, 52w high, 52w low (from summary)
+                        def _fmt_market_cap(mc):
+                            if mc is None or mc <= 0:
+                                return "N/A"
+                            if mc >= 1e12:
+                                return f"${mc / 1e12:.2f}T"
+                            if mc >= 1e9:
+                                return f"${mc / 1e9:.2f}B"
+                            if mc >= 1e6:
+                                return f"${mc / 1e6:.2f}M"
+                            return f"${mc:,.0f}"
+                        v2_1, v2_2, v2_3, v2_4, v2_5 = st.columns(5)
+                        with v2_1:
+                            st.metric("Market cap", _fmt_market_cap(summary.get("market_cap")))
+                        with v2_2:
+                            h52 = summary.get("high_52w")
+                            st.metric("52w high", f"${h52:,.2f}" if h52 is not None else "N/A")
+                        with v2_3:
+                            l52 = summary.get("low_52w")
+                            st.metric("52w low", f"${l52:,.2f}" if l52 is not None else "N/A")
+                        with v2_4:
+                            pct_52 = summary.get("pct_from_52w_high")
+                            st.metric("% from 52w high", f"{pct_52:+.1f}%" if pct_52 is not None else "N/A")
+                        with v2_5:
+                            st.metric("", "", help="")
+                    
+                        # Create and display valuation chart (scroll to zoom, double-click to reset)
+                        valuation_fig = create_valuation_chart(valuation_data)
+                        st.plotly_chart(valuation_fig, use_container_width=True, config={
+                            'displayModeBar': True,
+                            'scrollZoom': True,
+                            'toImageButtonOptions': {
+                                'format': 'png',
+                                'filename': f'{ticker_input}_valuation',
+                                'height': 600,
+                                'width': 1200,
+                                'scale': 2
+                            }
+                        })
+                    
+                        # Database save button and status
+                        from market_data import save_valuation_to_db, check_ticker_in_db
+                    
+                        db_status = check_ticker_in_db(ticker_input)
+                    
+                        save_col1, save_col2 = st.columns([3, 1])
+                        with save_col1:
+                            if db_status['has_data']:
+                                status_note = "Fresh" if db_status["is_fresh"] else "Stale"
+                                st.caption(
+                                    f"**{status_note}:** **{ticker_input}** saved in database: {db_status['quarters']} quarters "
+                                    f"(most recent: {db_status['most_recent']})"
+                                )
+                            else:
+                                st.caption(f"**{ticker_input}** not saved in database yet")
+                    
+                        with save_col2:
+                            # Check if data came from database
+                            from_db = valuation_data.get('from_database', False)
+                        
+                            if from_db:
+                                st.success("Loaded from database")
+                            else:
+                                if st.button("Save", key=f"save_valuation_{ticker_input}", help="Save this ticker's valuation data to your database"):
+                                    # Get the raw data to save
+                                    pe_history = valuation_data.get('pe_data', pd.DataFrame())
+                                    revenue_data = valuation_data.get('revenue_data', pd.DataFrame())
+                                
+                                    # Convert DataFrames back to list format
+                                    pe_list = []
+                                    if not pe_history.empty:
+                                        for _, row in pe_history.iterrows():
+                                            pe_list.append({
+                                                'date': row['date'],
+                                                'pe': row['pe'],
+                                                'ttm_eps': row.get('ttm_eps'),
+                                                'price': row.get('price'),
+                                                'source': row.get('source', 'api')
+                                            })
+                                
+                                    revenue_list = []
+                                    if not revenue_data.empty:
+                                        for _, row in revenue_data.iterrows():
+                                            revenue_list.append({
+                                                'date': row['date'],
+                                                'revenue': row.get('revenue'),
+                                                'yoy_growth': row.get('growth') if row.get('growth_type') == 'yoy' else None,
+                                                'qoq_growth': row.get('growth') if row.get('growth_type') == 'qoq' else None
+                                            })
+                                
+                                    if save_valuation_to_db(ticker_input, pe_list, revenue_list):
+                                        st.success(f"Saved {ticker_input} to database")
+                                        st.rerun()
+                                    else:
+                                        st.error("Failed to save. Check database connection.")
+                    
+                        # Valuation interpretation guide
+                        with st.expander("How to interpret this chart"):
+                            st.markdown("""
+                            **P/E Multiple (Top Panel):**
+                            - Shows how much investors are willing to pay per dollar of earnings
+                            - **Lower P/E** (< 15-20x): May indicate undervaluation or slower growth expectations
+                            - **Higher P/E** (> 30-40x): May indicate overvaluation or high growth expectations
+                            - **Rising P/E**: Investors becoming more optimistic
+                            - **Falling P/E**: Investors becoming more cautious
+                        
+                            **Revenue Growth YoY % (Bottom Panel):**
+                            - Shows the year-over-year revenue growth rate each quarter
+                            - **Solid line**: Actual reported results
+                            - **Dashed line**: Analyst projections (if available)
+                            - **Accelerating growth**: Revenue growth rate increasing → bullish
+                            - **Decelerating growth**: Revenue growth rate decreasing → watch for multiple compression
+                        
+                            ---
+                        
+                            **PEG ratio (P/E to growth):**
+                        
+                            The PEG ratio divides P/E by expected annual earnings growth rate. It answers: *"Am I paying a fair price for this growth?"*
+                        
+                            | PEG range | Interpretation |
+                            |-----------|----------------|
+                            | **< 1.0** | Potentially **undervalued** relative to growth |
+                            | **1.0 - 2.0** | **Fairly valued** |
+                            | **> 2.0** | Potentially **expensive** relative to growth |
+                        
+                            *Example:* A stock with P/E of 30x and 30% earnings growth has PEG = 1.0 (fair). The same P/E with only 15% growth has PEG = 2.0 (expensive).
+                        
+                            ---
+                        
+                            **The Key Relationship:**
+                            | P/E Trend | Revenue Trend | Interpretation |
+                            |-----------|---------------|----------------|
+                            | ↑ Rising | ↑ Accelerating | Growth justified premium |
+                            | ↑ Rising | ↓ Decelerating | Potential overvaluation (watch) |
+                            | ↓ Falling | ↑ Accelerating | Potential opportunity |
+                            | ↓ Falling | ↓ Decelerating | Fundamentals weakening |
+                            """)
+                    else:
+                        st.info(
+                            f"Valuation data not available for {ticker_input}. "
+                            "This may be due to limited financial disclosures or the stock being too new."
+                        )
+                
+                    # === DCF SANDBOX ===
+                    st.markdown("---")
+                    st.markdown("### Discounted Cash Flow (DCF)")
+                    st.caption("Auto-populated with Wall Street consensus and historical data. Adjust assumptions to see real-time implied value.")
+                
+                    with st.spinner("Loading DCF baseline data..."):
+                        from market_data import _cached_get_dcf_baseline
+                        dcf_baseline = _cached_get_dcf_baseline(ticker_input)
+                
+                    if not dcf_baseline:
+                        st.info("Some baseline metrics could not be fetched. Please input them manually below.")
+                        dcf_baseline = {}
+                
+                    # Check for negative cash flow exception
+                    initial_fcf = dcf_baseline.get('fcf')
+                    has_negative_fcf = initial_fcf is not None and initial_fcf < 0
+                    if has_negative_fcf:
+                        st.warning(f"Company has negative trailing FCF (${initial_fcf:,.0f}). DCF model requires forward-looking positive cash flow assumptions. Defaulting to 0.")
+                        initial_fcf = 0.0
+                
+                    dcf_col1, dcf_col2 = st.columns([1, 2])
+                    with dcf_col1:
+                        st.markdown("#### Input Assumptions")
+                        with st.container(border=True):
+                            def_fcf = float(initial_fcf) if initial_fcf else 0.0
+                            def_growth = float(dcf_baseline.get('growth_y1_5', 0.02)) * 100
+                            def_wacc = float(dcf_baseline.get('wacc', 0.10)) * 100
+                        
+                            user_fcf = st.number_input("Initial FCF (TTM) $", value=def_fcf, format="%.0f", step=1000000.0)
+                            user_g_1_5 = st.slider("Growth Y1-5 (%)", min_value=-20.0, max_value=100.0, value=def_growth, step=0.5)
+                            user_g_6_10 = st.slider("Growth Y6-10 (%)", min_value=-20.0, max_value=50.0, value=max(2.0, def_growth/2), step=0.5)
+                        
+                            # Dynamic max for terminal growth (must be < WACC)
+                            wacc_limit = max(1.0, def_wacc - 0.5)
+                            user_tg = st.slider("Terminal Growth (%)", min_value=0.0, max_value=min(5.0, wacc_limit), value=2.5, step=0.1)
+                            user_wacc = st.slider("WACC / Discount Rate (%)", min_value=max(user_tg + 0.1, 5.0), max_value=25.0, value=def_wacc, step=0.1, help=f"Auto-calculated at {def_wacc:.1f}% using CAPM")
+                        
+                    with dcf_col2:
+                        st.markdown("#### Valuation Output")
+                        shares = dcf_baseline.get('shares_outstanding')
+                        debt = dcf_baseline.get('total_debt', 0.0)
+                        cash = dcf_baseline.get('total_cash', 0.0)
+                        current_price = dcf_baseline.get('current_price') or summary.get('current_price')
+                    
+                        if not shares or shares <= 0:
+                            st.info("Missing shares outstanding. Showing Enterprise Value only.")
+                    
+                        # Math Engine
+                        wacc_dec = user_wacc / 100.0
+                        g1_dec = user_g_1_5 / 100.0
+                        g2_dec = user_g_6_10 / 100.0
+                        tg_dec = user_tg / 100.0
+                    
+                        cf_projections = []
+                        pv_cfs = []
+                        current_cf = user_fcf
+                    
+                        # Years 1-5
+                        for t in range(1, 6):
+                            current_cf *= (1 + g1_dec)
+                            cf_projections.append(current_cf)
+                            pv_cfs.append(current_cf / ((1 + wacc_dec) ** t))
+                        
+                        # Years 6-10
+                        for t in range(6, 11):
+                            current_cf *= (1 + g2_dec)
+                            cf_projections.append(current_cf)
+                            pv_cfs.append(current_cf / ((1 + wacc_dec) ** t))
+                        
+                        pv_10yr_fcf = sum(pv_cfs)
+                        fcf_yr10 = cf_projections[-1] if cf_projections else 0.0
+                    
+                        # Terminal Value
+                        if wacc_dec > tg_dec:
+                            terminal_value = (fcf_yr10 * (1 + tg_dec)) / (wacc_dec - tg_dec)
+                            pv_tv = terminal_value / ((1 + wacc_dec) ** 10)
+                        else:
+                            pv_tv = 0.0
+                        
+                        enterprise_value = pv_10yr_fcf + pv_tv
+                        equity_value = enterprise_value + cash - debt
+                    
+                        implied_price = equity_value / shares if shares and shares > 0 else 0.0
+                    
+                        # Headline Metric
+                        if implied_price > 0 and current_price and current_price > 0:
+                            delta = (implied_price - current_price) / current_price
+                            delta_color = "normal" if delta >= 0 else "inverse"
+                            st.markdown("""
+                                <style>
+                                [data-testid="stMetricValue"] { font-family: 'Monaco', monospace; font-size: 42px !important; }
+                                </style>
+                            """, unsafe_allow_html=True)
+                            st.metric("DCF Implied Price", f"${implied_price:.2f}", f"{delta*100:+.1f}% vs Current (${current_price:.2f})", delta_color=delta_color)
+                        elif enterprise_value > 0 or enterprise_value < 0:
+                            st.metric("Implied Enterprise Value", f"${enterprise_value:,.0f}", None)
+                        
+                        # Plotly Waterfall
+                        if enterprise_value != 0:
+                            # Scale down massive numbers for cleaner display
+                            scale = 1
+                            suffix = ""
+                            max_val = max(abs(enterprise_value), abs(equity_value))
+                            if max_val >= 1e12:
+                                scale = 1e12
+                                suffix = "T"
+                            elif max_val >= 1e9:
+                                scale = 1e9
+                                suffix = "B"
+                            elif max_val >= 1e6:
+                                scale = 1e6
+                                suffix = "M"
+                            
+                            waterfall = go.Figure(go.Waterfall(
+                                orientation="v",
+                                measure=["relative", "relative", "relative", "relative", "total"],
+                                x=["10Y FCF (PV)", "Terminal (PV)", "Cash", "Debt", "Equity"],
+                                textposition="outside",
+                                text=[
+                                    f"${pv_10yr_fcf/scale:,.1f}{suffix}",
+                                    f"${pv_tv/scale:,.1f}{suffix}",
+                                    f"${cash/scale:,.1f}{suffix}",
+                                    f"-${debt/scale:,.1f}{suffix}",
+                                    f"${equity_value/scale:,.1f}{suffix}"
+                                ],
+                                textfont=dict(family='Monaco, monospace', size=11, color='#8b949e'),
+                                y=[pv_10yr_fcf, pv_tv, cash, -debt, equity_value],
+                                connector={"line":{"color":"#30363d"}},
+                                decreasing={"marker":{"color":"#ff073a"}},
+                                increasing={"marker":{"color":"#00ff41"}},
+                                totals={"marker":{"color":"#1f77b4"}}
+                            ))
+                        
+                            waterfall.update_layout(
+                                title=None,
+                                waterfallgap=0.3,
+                                plot_bgcolor='rgba(0,0,0,0)',
+                                paper_bgcolor='rgba(0,0,0,0)',
+                                margin=dict(t=30, b=40, l=10, r=10),
+                                height=350,
+                                showlegend=False,
+                                xaxis=dict(showgrid=False, zeroline=False, tickfont=dict(color='#8b949e')),
+                                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
+                            )
+                            st.plotly_chart(waterfall, use_container_width=True, config={'displayModeBar': False})
+                
+                    # === FUNDAMENTALS AND RATIOS (expander) ===
+                    try:
+                        fundamentals = _cached_get_fundamentals_ratios(ticker_input)
+                        st.markdown("### Fundamentals and ratios")
+                        if True:
+                            if fundamentals is None:
+                                st.caption("Fundamentals unavailable.")
+                            else:
+                                rev = fundamentals.get("revenue_ttm")
+                                vals = [rev, fundamentals.get("gross_margin"), fundamentals.get("operating_margin"), fundamentals.get("net_margin"), fundamentals.get("roe"), fundamentals.get("roa")]
+                                if all(v is None for v in vals):
+                                    st.caption("Fundamentals unavailable.")
+                                else:
+                                    st.caption(f"**Revenue (TTM):** ${rev:,.0f}" if rev is not None and rev else "**Revenue (TTM):** N/A")
+                                    for label, key in [
+                                        ("Gross margin", "gross_margin"),
+                                        ("Operating margin", "operating_margin"),
+                                        ("Net margin", "net_margin"),
+                                        ("ROE", "roe"),
+                                        ("ROA", "roa"),
+                                    ]:
+                                        val = fundamentals.get(key)
+                                        if val is not None:
+                                            if "margin" in key:
+                                                st.caption(f"**{label}:** {val * 100:.2f}%" if abs(val) <= 1 else f"**{label}:** {val:.2f}%")
+                                            else:
+                                                st.caption(f"**{label}:** {val * 100:.2f}%" if abs(val) <= 1 else f"**{label}:** {val:.2f}")
+                                        else:
+                                            st.caption(f"**{label}:** N/A")
+                    except Exception:
+                        st.markdown("### Fundamentals and ratios")
+                        if True:
+                            st.caption("Fundamentals unavailable.")
+                    # === OPTIONS · ATM IV TERM (BVOL / OVME-lite) ===
+                    st.markdown("---")
+                    st.markdown("### Options · ATM implied vol term structure")
+                    st.caption(
+                        "Implied volatility at the listed strike nearest spot (call/put average when both exist). "
+                        "Source: Yahoo Finance option chains—delayed/aggregated, not a dealer surface."
+                    )
+                    iv_table_df = None
+                    try:
+                        _spot_iv = float(summary.get("current_price") or 0.0)
+                        _sk = round(_spot_iv, 2) if _spot_iv > 0 else 0.0
+                        iv_res = _cached_iv_term_structure(ticker_input, _sk)
+                        if iv_res.data_warnings:
+                            st.caption("Notes: " + " ".join(iv_res.data_warnings[:6]))
+                        _iv_rows = [
+                            {
+                                "Expiry": p.expiry,
+                                "DTE": p.dte,
+                                "ATM strike": p.strike,
+                                "IV %": round(p.iv_atm * 100.0, 2) if p.iv_atm is not None else None,
+                                "IV src": p.source,
+                            }
+                            for p in iv_res.points
+                            if p.iv_atm is not None
+                        ]
+                        if _iv_rows:
+                            _df_iv = pd.DataFrame(_iv_rows)
+                            iv_table_df = _df_iv
+                            _insight = (
+                                f"{ticker_input}: ATM IV across {len(_df_iv)} expiries vs days to expiry"
+                                + (f" (spot ≈ ${iv_res.spot_used:,.2f})" if iv_res.spot_used else "")
+                            )
+                            fig_iv = go.Figure(
+                                go.Scatter(
+                                    x=_df_iv["DTE"],
+                                    y=_df_iv["IV %"],
+                                    mode="lines+markers",
+                                    line=dict(color="#c084fc", width=2),
+                                    marker=dict(size=8, color="#e8a838", line=dict(width=1, color="rgba(15,23,42,0.5)")),
+                                    hovertemplate="DTE %{x} · IV %{y:.1f}%<extra></extra>",
+                                )
+                            )
+                            fig_iv.update_layout(
+                                title={"text": _insight, "font": {"family": "Sora", "size": 14, "color": "#f8fafc"}},
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                font_color="#cbd5e1",
+                                font_family="IBM Plex Sans",
+                                xaxis=dict(title="Days to expiry", gridcolor="rgba(148,163,184,0.12)"),
+                                yaxis=dict(title="Implied vol (ATM, %)", gridcolor="rgba(148,163,184,0.12)"),
+                                margin=dict(l=8, r=8, t=56, b=40),
+                            )
+                            st.plotly_chart(fig_iv, use_container_width=True)
+                            with st.expander("IV term table", expanded=False):
+                                st.dataframe(
+                                    _gft_tabular_styler(_df_iv),
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+                        else:
+                            st.info("No ATM IV points returned for this symbol (try another ticker or check chain availability).")
+                    except Exception as _iv_exc:
+                        st.warning(f"Options IV section unavailable: {_iv_exc}")
+                        iv_table_df = None
+
+                    with st.expander("Options · Black–Scholes (European theory price)", expanded=False):
+                        st.caption(
+                            "Black–Scholes with continuous yield q. Default rate uses cached ^TNX last close (percent points). "
+                            "For comparison only—not a live quote or execution price."
+                        )
+                        _tnx_bs = _cached_tnx_last_percent()
+                        _spot_default = float(summary.get("current_price") or 100.0)
+                        bs_spot = st.number_input(
+                            "Spot ($)",
+                            min_value=0.01,
+                            value=max(0.01, _spot_default),
+                            key=f"bs_spot_{ticker_input}",
+                        )
+                        r_pct = st.number_input(
+                            "Risk-free (%, annual)",
+                            min_value=0.0,
+                            max_value=25.0,
+                            value=float(_tnx_bs),
+                            step=0.05,
+                            key=f"bs_r_{ticker_input}",
+                            help="Default seeded from ^TNX last yield.",
+                        )
+                        q_pct = st.number_input(
+                            "Dividend yield q (%, annual)",
+                            min_value=0.0,
+                            max_value=20.0,
+                            value=0.0,
+                            step=0.05,
+                            key=f"bs_q_{ticker_input}",
+                        )
+                        _preset_labels = ["Manual"]
+                        if iv_table_df is not None and not iv_table_df.empty:
+                            _preset_labels.extend(
+                                f"{row['Expiry']} · DTE {int(row['DTE'])} · IV {row['IV %']}% · K {row['ATM strike']}"
+                                for _, row in iv_table_df.iterrows()
+                            )
+                        pick = st.selectbox(
+                            "Inputs from IV table",
+                            _preset_labels,
+                            key=f"bs_pick_{ticker_input}",
+                        )
+                        if pick == "Manual":
+                            c_a, c_b, c_c = st.columns(3)
+                            with c_a:
+                                strike_bs = st.number_input(
+                                    "Strike ($)",
+                                    min_value=0.01,
+                                    value=max(0.01, _spot_default),
+                                    key=f"bs_k_{ticker_input}",
+                                )
+                            with c_b:
+                                dte_bs = st.number_input(
+                                    "Days to expiry",
+                                    min_value=1,
+                                    max_value=3650,
+                                    value=30,
+                                    key=f"bs_dte_{ticker_input}",
+                                )
+                            with c_c:
+                                iv_pct_bs = st.number_input(
+                                    "IV (%, annual)",
+                                    min_value=0.1,
+                                    max_value=500.0,
+                                    value=35.0,
+                                    key=f"bs_iv_{ticker_input}",
+                                )
+                        else:
+                            _pi = _preset_labels.index(pick) - 1
+                            _row = iv_table_df.iloc[_pi]
+                            strike_bs = float(_row["ATM strike"])
+                            dte_bs = int(_row["DTE"])
+                            iv_pct_bs = float(_row["IV %"])
+                            st.caption(
+                                f"Preset: strike **{strike_bs:.2f}** · DTE **{dte_bs}** · IV **{iv_pct_bs:.2f}%**"
+                            )
+                        _T = float(dte_bs) / 365.0
+                        _sig = float(iv_pct_bs) / 100.0
+                        _r = float(r_pct) / 100.0
+                        _q = float(q_pct) / 100.0
+                        _bs_out = black_scholes_european(bs_spot, strike_bs, _T, _r, _sig, _q)
+                        m1, m2, m3 = st.columns(3)
+                        with m1:
+                            st.metric("Call (theory)", f"${_bs_out.call_price:.4f}")
+                        with m2:
+                            st.metric("Put (theory)", f"${_bs_out.put_price:.4f}")
+                        with m3:
+                            st.caption(f"d1={_bs_out.d1:.3f} · d2={_bs_out.d2:.3f}")
+
+                with tab_corp:
+                    # === COMPANY PROFILE (expander) ===
+                    try:
+                        profile = _cached_get_company_profile(ticker_input)
+                        st.markdown("### Company profile")
                         if profile is None:
                             st.caption("Profile unavailable.")
                         else:
@@ -3381,153 +4241,11 @@ def market_analysis_page():
                             with c2:
                                 st.caption(f"**Employees:** {profile.get('employees') or 'N/A'}")
                                 st.caption(f"**CEO:** {profile.get('ceo') or 'N/A'}")
-                except Exception:
-                    with st.expander("Company profile", expanded=False):
+                    except Exception:
+                        st.markdown("### Company profile")
                         st.caption("Profile unavailable.")
                 
-                # === SIGNAL DISPLAY ===
-                st.markdown("---")
-                
-                signal_col, info_col = st.columns([1, 2])
-                
-                with signal_col:
-                    st.markdown("### Current signal")
-                    st.markdown(get_signal_badge(summary['signal']), unsafe_allow_html=True)
-                
-                with info_col:
-                    st.markdown("### Signal logic")
-                    st.markdown("""
-                    | Signal | Condition |
-                    |--------|-----------|
-                    | **BUY** | Price < Lower BB AND RSI < 35 |
-                    | **SELL** | Price > Upper BB AND RSI > 65 |
-                    | **GOLDEN CROSS** | SMA 50 crosses above SMA 200 |
-                    | **DEATH CROSS** | SMA 50 crosses below SMA 200 |
-                    """)
-                
-                st.markdown("---")
-                
-                # === DUAL CHART ===
-                st.markdown("### Technical chart")
-                
-                # Trading days per year for tail slicing
-                TRADING_DAYS_PER_YEAR = 252
-                time_range_options = ['3M', '6M', '1Y', '2Y', '5Y', '10Y', '15Y', '25Y', '50Y', 'Max', 'Custom']
-                date_range = st.selectbox(
-                    "Time Range",
-                    options=time_range_options,
-                    index=3,
-                    help="Select the time range to display"
-                )
-                chart_type = "line" if st.checkbox("Line chart (close only)", value=False, help="Show closing price as a line instead of candlesticks.") else "candlestick"
-                show_signals = st.checkbox(
-                    "Show buy/sell signals",
-                    value=True,
-                    help="Show BUY/SELL and cross markers on the price chart.",
-                )
-                strong_signals_only = st.checkbox(
-                    "Strong signals only",
-                    value=False,
-                    help="When on, only show BUY when RSI < 25 and SELL when RSI > 75 (fewer markers).",
-                )
-
-                if date_range == 'Custom':
-                    from datetime import timedelta as _td
-                    _today = date.today()
-                    _default_start = _today - _td(days=365)
-                    custom_col1, custom_col2 = st.columns(2)
-                    with custom_col1:
-                        custom_start = st.date_input("Start date", value=_default_start, key="tech_chart_start")
-                    with custom_col2:
-                        custom_end = st.date_input("End date", value=_today, key="tech_chart_end")
-                    if custom_start and custom_end and custom_start <= custom_end:
-                        df_display = df[(df.index.date >= custom_start) & (df.index.date <= custom_end)]
-                        if df_display.empty:
-                            st.warning("No data in the selected date range.")
-                            df_display = df.tail(TRADING_DAYS_PER_YEAR)
-                    else:
-                        df_display = df.tail(TRADING_DAYS_PER_YEAR)
-                elif date_range == '3M':
-                    df_display = df.tail(63)
-                elif date_range == '6M':
-                    df_display = df.tail(126)
-                elif date_range == '1Y':
-                    df_display = df.tail(TRADING_DAYS_PER_YEAR)
-                elif date_range == '2Y':
-                    df_display = df.tail(TRADING_DAYS_PER_YEAR * 2)
-                elif date_range == '5Y':
-                    df_display = df.tail(TRADING_DAYS_PER_YEAR * 5)
-                elif date_range == '10Y':
-                    df_display = df.tail(TRADING_DAYS_PER_YEAR * 10)
-                elif date_range == '15Y':
-                    df_display = df.tail(TRADING_DAYS_PER_YEAR * 15)
-                elif date_range == '25Y':
-                    df_display = df.tail(TRADING_DAYS_PER_YEAR * 25)
-                elif date_range == '50Y':
-                    df_display = df.tail(TRADING_DAYS_PER_YEAR * 50)
-                else:
-                    df_display = df
-                
-                # Edge-case captions: data shorter than requested; SMA 200 partial
-                if not df_display.empty and date_range not in ('Custom', 'Max'):
-                    expected_days = {
-                        '5Y': TRADING_DAYS_PER_YEAR * 5, '10Y': TRADING_DAYS_PER_YEAR * 10,
-                        '15Y': TRADING_DAYS_PER_YEAR * 15, '25Y': TRADING_DAYS_PER_YEAR * 25,
-                        '50Y': TRADING_DAYS_PER_YEAR * 50,
-                    }
-                    expected = expected_days.get(date_range)
-                    if expected and len(df_display) < expected * 0.9:
-                        first_ts = df_display.index.min()
-                        first_str = first_ts.strftime("%Y-%m-%d") if hasattr(first_ts, "strftime") else str(first_ts)[:10]
-                        st.caption(f"Data from {first_str} (all available).")
-                if len(df) < 200:
-                    st.caption("SMA 200 is shown with partial data (fewer than 200 trading days).")
-                
-                # Insider transactions for chart overlay (optional)
-                insider_list = []
-                try:
-                    insider_list = _cached_fetch_insider_transactions(ticker_input)
-                except Exception:
-                    pass
-                # TradingView Lightweight Charts: candlestick or line + volume + support lines + markers + RSI (zoom + double-click reset)
-                tech_data = df_to_technical_chart_data(df_display, strong_signals_only=strong_signals_only)
-                # Show markers when user wants any signals: all (show_signals) or strong-only (strong_signals_only)
-                markers_to_show = (tech_data["markers"] or None) if (show_signals or strong_signals_only) else None
-                chart_config = build_technical_chart_config(
-                    ticker_input,
-                    tech_data["candles"],
-                    tech_data["volume"],
-                    dark_theme=True,
-                    rsi=tech_data["rsi"] or None,
-                    sma_50=tech_data["sma_50"] or None,
-                    sma_200=tech_data["sma_200"] or None,
-                    bb_upper=tech_data["bb_upper"] or None,
-                    bb_lower=tech_data["bb_lower"] or None,
-                    markers=markers_to_show,
-                    price_series_type=chart_type,
-                )
-                renderLightweightCharts(chart_config, key=f"technical_chart_{ticker_input}")
-
-                with st.expander("Chart guide — lines and signals", expanded=False):
-                    st.markdown("""
-                    Use **Line chart (close only)** to show closing price as a line instead of candlesticks.
-                    **Show buy/sell signals** = all markers. **Strong signals only** = only stricter signals (BUY when RSI &lt; 25, SELL when RSI &gt; 75). You can use either or both.
-
-                    **Price panel**
-                    | Line / marker | Meaning |
-                    |----------------|---------|
-                    | **Blue line** | SMA 50 (50-day simple moving average) |
-                    | **Orange line** | SMA 200 (200-day simple moving average) |
-                    | **Gray dotted lines** | Bollinger Bands (upper and lower) |
-                    | **Green ↑** | Buy signal (price &lt; lower band and RSI &lt; 35) |
-                    | **Red ↓** | Sell signal (price &gt; upper band and RSI &gt; 65) |
-                    | **Gold dot** | Golden cross (SMA 50 crosses above SMA 200) |
-                    | **Dark red dot** | Death cross (SMA 50 crosses below SMA 200) |
-                    | **Green/teal bars** | Volume (lower section) |
-
-                    **RSI panel:** Purple line = RSI (14). Values above 70 = overbought; below 30 = oversold.
-                    """)
-                with st.expander("Insider transactions", expanded=False):
+                    st.markdown("### Insider transactions")
                     if not insider_list:
                         st.caption("No recent insider data or API unavailable. Set FINNHUB_API_KEY for insider transactions.")
                     else:
@@ -3591,906 +4309,182 @@ def market_analysis_page():
                         table_html = f'<table style="width:100%; border-collapse:collapse;"><caption style="text-align:left; margin-bottom:6px;">Buy rows in green, sell in red.</caption>{header}{"".join(body_parts)}</tbody></table>'
                         st.markdown(table_html, unsafe_allow_html=True)
 
-                # === RECENT SIGNALS TABLE ===
-                st.markdown("---")
-                st.markdown("### Recent signals")
                 
-                recent_signals = df[df['Signal'] != ''].tail(10).copy()
-                if not recent_signals.empty:
-                    recent_signals = recent_signals[['Close', 'RSI_14', 'SMA_50', 'SMA_200', 'Signal']].copy()
-                    recent_signals.columns = ['Price', 'RSI', 'SMA 50', 'SMA 200', 'Signal']
-                    recent_signals = recent_signals.round(2)
-                    recent_signals.index = recent_signals.index.strftime('%Y-%m-%d')
-                    recent_signals = recent_signals.iloc[::-1]  # Most recent first
-                    
-                    st.dataframe(
-                        _gft_tabular_styler(recent_signals),
-                        use_container_width=True,
-                        column_config={
-                            "Signal": st.column_config.TextColumn("Signal", width="medium"),
-                            "Price": st.column_config.NumberColumn("Price", format="$%.2f"),
-                            "RSI": st.column_config.NumberColumn("RSI", format="%.1f"),
-                            "SMA 50": st.column_config.NumberColumn("SMA 50", format="$%.2f"),
-                            "SMA 200": st.column_config.NumberColumn("SMA 200", format="$%.2f"),
-                        },
-                    )
-                else:
-                    st.info("No trading signals generated in the selected period.")
-                
-                # === VALUATION CHART ===
-                st.markdown("---")
-                st.markdown("### Valuation analysis")
-                st.caption("P/E Multiple and Revenue Growth trends help assess if a stock is fairly valued relative to its growth.")
-                
-                # Time range selector and optional refetch for valuation chart
-                val_time_col1, val_time_col2 = st.columns([1, 4])
-                with val_time_col1:
-                    valuation_years = st.selectbox(
-                        "Time Range",
-                        options=[2, 5, 10],
-                        index=0,
-                        format_func=lambda x: f"{x} Years",
-                        key="valuation_time_range",
-                        help="Select historical time range for valuation analysis"
-                    )
-                    # Force refetch from API (skip DB) to get best-available P/E from all sources
-                    refetch_key = f"valuation_refetch_{ticker_input}"
-                    if st.button("Refetch from API", key=refetch_key, help="Skip database and fetch fresh P/E and revenue from APIs (best available data)"):
-                        st.session_state["valuation_skip_db"] = True
-                
-                skip_db = st.session_state.pop("valuation_skip_db", False)
-                with st.spinner(f"Loading {valuation_years}-year valuation data..." + (" (from API)" if skip_db else "")):
-                    valuation_data = _cached_get_valuation_chart_data(ticker_input, valuation_years, skip_db)
-                
-                if valuation_data:
-                    # Show key valuation metrics
-                    val_col1, val_col2, val_col3, val_col4, val_col5 = st.columns(5)
-                    
-                    with val_col1:
-                        pe_val = valuation_data['current_pe']
-                        if pe_val:
-                            pe_band = "lower" if pe_val < 20 else "mid" if pe_val < 35 else "elevated"
-                            st.metric("Current P/E", f"{pe_val:.1f}x", delta=pe_band, delta_color="off")
-                        else:
-                            st.metric("Current P/E", "N/A")
-                    
-                    with val_col2:
-                        fwd_pe = valuation_data['forward_pe']
-                        if fwd_pe:
-                            st.metric("Forward P/E", f"{fwd_pe:.1f}x")
-                        else:
-                            st.metric("Forward P/E", "N/A")
-                    
-                    with val_col3:
-                        peg = valuation_data.get('peg_ratio')
-                        earnings_growth = valuation_data.get('earnings_growth')
-                        
-                        if peg and peg > 0:
-                            # Color code PEG ratio
-                            # < 1 = potentially undervalued, 1-2 = fair, > 2 = expensive
-                            if peg < 1:
-                                peg_label = "Undervalued"
-                            elif peg < 2:
-                                peg_label = "Fair"
-                            else:
-                                peg_label = "Expensive"
-                            st.metric(
-                                "PEG Ratio",
-                                f"{peg:.2f}",
-                                peg_label,
-                                delta_color="off",
-                            )
-                        elif earnings_growth:
-                            # Show earnings growth instead if PEG unavailable (no delta = no arrow)
-                            growth_pct = earnings_growth * 100
-                            st.metric(
-                                "Earnings Growth (YoY)",
-                                f"{growth_pct:+.1f}%",
-                                delta=None,
-                                delta_color="off",
-                            )
-                        else:
-                            st.metric("PEG Ratio", "N/A")
-                    
-                    with val_col4:
-                        sector = valuation_data.get('sector')
-                        st.metric("Sector", sector if sector else "N/A")
-                    
-                    with val_col5:
-                        industry = valuation_data.get('industry')
-                        st.metric("Industry", industry[:18] + "..." if industry and len(industry) > 18 else (industry or "N/A"))
-                    
-                    # Second row: Market cap, 52w high, 52w low (from summary)
-                    def _fmt_market_cap(mc):
-                        if mc is None or mc <= 0:
-                            return "N/A"
-                        if mc >= 1e12:
-                            return f"${mc / 1e12:.2f}T"
-                        if mc >= 1e9:
-                            return f"${mc / 1e9:.2f}B"
-                        if mc >= 1e6:
-                            return f"${mc / 1e6:.2f}M"
-                        return f"${mc:,.0f}"
-                    v2_1, v2_2, v2_3, v2_4, v2_5 = st.columns(5)
-                    with v2_1:
-                        st.metric("Market cap", _fmt_market_cap(summary.get("market_cap")))
-                    with v2_2:
-                        h52 = summary.get("high_52w")
-                        st.metric("52w high", f"${h52:,.2f}" if h52 is not None else "N/A")
-                    with v2_3:
-                        l52 = summary.get("low_52w")
-                        st.metric("52w low", f"${l52:,.2f}" if l52 is not None else "N/A")
-                    with v2_4:
-                        pct_52 = summary.get("pct_from_52w_high")
-                        st.metric("% from 52w high", f"{pct_52:+.1f}%" if pct_52 is not None else "N/A")
-                    with v2_5:
-                        st.metric("", "", help="")
-                    
-                    # Create and display valuation chart (scroll to zoom, double-click to reset)
-                    valuation_fig = create_valuation_chart(valuation_data)
-                    st.plotly_chart(valuation_fig, use_container_width=True, config={
-                        'displayModeBar': True,
-                        'scrollZoom': True,
-                        'toImageButtonOptions': {
-                            'format': 'png',
-                            'filename': f'{ticker_input}_valuation',
-                            'height': 600,
-                            'width': 1200,
-                            'scale': 2
-                        }
-                    })
-                    
-                    # Database save button and status
-                    from market_data import save_valuation_to_db, check_ticker_in_db
-                    
-                    db_status = check_ticker_in_db(ticker_input)
-                    
-                    save_col1, save_col2 = st.columns([3, 1])
-                    with save_col1:
-                        if db_status['has_data']:
-                            status_note = "Fresh" if db_status["is_fresh"] else "Stale"
-                            st.caption(
-                                f"**{status_note}:** **{ticker_input}** saved in database: {db_status['quarters']} quarters "
-                                f"(most recent: {db_status['most_recent']})"
-                            )
-                        else:
-                            st.caption(f"**{ticker_input}** not saved in database yet")
-                    
-                    with save_col2:
-                        # Check if data came from database
-                        from_db = valuation_data.get('from_database', False)
-                        
-                        if from_db:
-                            st.success("Loaded from database")
-                        else:
-                            if st.button("Save", key=f"save_valuation_{ticker_input}", help="Save this ticker's valuation data to your database"):
-                                # Get the raw data to save
-                                pe_history = valuation_data.get('pe_data', pd.DataFrame())
-                                revenue_data = valuation_data.get('revenue_data', pd.DataFrame())
-                                
-                                # Convert DataFrames back to list format
-                                pe_list = []
-                                if not pe_history.empty:
-                                    for _, row in pe_history.iterrows():
-                                        pe_list.append({
-                                            'date': row['date'],
-                                            'pe': row['pe'],
-                                            'ttm_eps': row.get('ttm_eps'),
-                                            'price': row.get('price'),
-                                            'source': row.get('source', 'api')
-                                        })
-                                
-                                revenue_list = []
-                                if not revenue_data.empty:
-                                    for _, row in revenue_data.iterrows():
-                                        revenue_list.append({
-                                            'date': row['date'],
-                                            'revenue': row.get('revenue'),
-                                            'yoy_growth': row.get('growth') if row.get('growth_type') == 'yoy' else None,
-                                            'qoq_growth': row.get('growth') if row.get('growth_type') == 'qoq' else None
-                                        })
-                                
-                                if save_valuation_to_db(ticker_input, pe_list, revenue_list):
-                                    st.success(f"Saved {ticker_input} to database")
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to save. Check database connection.")
-                    
-                    # Valuation interpretation guide
-                    with st.expander("How to interpret this chart"):
+                    # === COMPETITORS ===
+                    st.markdown("---")
+                    st.markdown("### Competitors")
+                    st.caption("Same industry and similar market cap; optional sort by description match.")
+                    with st.expander("How we pick peers", expanded=False):
                         st.markdown("""
-                        **P/E Multiple (Top Panel):**
-                        - Shows how much investors are willing to pay per dollar of earnings
-                        - **Lower P/E** (< 15-20x): May indicate undervaluation or slower growth expectations
-                        - **Higher P/E** (> 30-40x): May indicate overvaluation or high growth expectations
-                        - **Rising P/E**: Investors becoming more optimistic
-                        - **Falling P/E**: Investors becoming more cautious
-                        
-                        **Revenue Growth YoY % (Bottom Panel):**
-                        - Shows the year-over-year revenue growth rate each quarter
-                        - **Solid line**: Actual reported results
-                        - **Dashed line**: Analyst projections (if available)
-                        - **Accelerating growth**: Revenue growth rate increasing → bullish
-                        - **Decelerating growth**: Revenue growth rate decreasing → watch for multiple compression
-                        
-                        ---
-                        
-                        **PEG ratio (P/E to growth):**
-                        
-                        The PEG ratio divides P/E by expected annual earnings growth rate. It answers: *"Am I paying a fair price for this growth?"*
-                        
-                        | PEG range | Interpretation |
-                        |-----------|----------------|
-                        | **< 1.0** | Potentially **undervalued** relative to growth |
-                        | **1.0 - 2.0** | **Fairly valued** |
-                        | **> 2.0** | Potentially **expensive** relative to growth |
-                        
-                        *Example:* A stock with P/E of 30x and 30% earnings growth has PEG = 1.0 (fair). The same P/E with only 15% growth has PEG = 2.0 (expensive).
-                        
-                        ---
-                        
-                        **The Key Relationship:**
-                        | P/E Trend | Revenue Trend | Interpretation |
-                        |-----------|---------------|----------------|
-                        | ↑ Rising | ↑ Accelerating | Growth justified premium |
-                        | ↑ Rising | ↓ Decelerating | Potential overvaluation (watch) |
-                        | ↓ Falling | ↑ Accelerating | Potential opportunity |
-                        | ↓ Falling | ↓ Decelerating | Fundamentals weakening |
+                        Peers are chosen using **industry** and **similar market cap** (via FMP screener).
+                        When your company's industry doesn't match our data provider's list, we use sector-level peers and note it above the table.
+                        You can sort by **description match** to rank by text similarity to the company description (same candidate set).
+                        Matching uses the **full** company description (not the shortened preview in the profile box above).
+                        Description match ranks by text similarity, not verified competitive relationship; results can include companies that sound similar but operate in different segments.
                         """)
-                else:
-                    st.info(
-                        f"Valuation data not available for {ticker_input}. "
-                        "This may be due to limited financial disclosures or the stock being too new."
-                    )
-                
-                # === DCF SANDBOX ===
-                st.markdown("---")
-                st.markdown("### Discounted Cash Flow (DCF)")
-                st.caption("Auto-populated with Wall Street consensus and historical data. Adjust assumptions to see real-time implied value.")
-                
-                with st.spinner("Loading DCF baseline data..."):
-                    from market_data import _cached_get_dcf_baseline
-                    dcf_baseline = _cached_get_dcf_baseline(ticker_input)
-                
-                if not dcf_baseline:
-                    st.info("Some baseline metrics could not be fetched. Please input them manually below.")
-                    dcf_baseline = {}
-                
-                # Check for negative cash flow exception
-                initial_fcf = dcf_baseline.get('fcf')
-                has_negative_fcf = initial_fcf is not None and initial_fcf < 0
-                if has_negative_fcf:
-                    st.warning(f"Company has negative trailing FCF (${initial_fcf:,.0f}). DCF model requires forward-looking positive cash flow assumptions. Defaulting to 0.")
-                    initial_fcf = 0.0
-                
-                dcf_col1, dcf_col2 = st.columns([1, 2])
-                with dcf_col1:
-                    st.markdown("#### Input Assumptions")
-                    with st.container(border=True):
-                        def_fcf = float(initial_fcf) if initial_fcf else 0.0
-                        def_growth = float(dcf_baseline.get('growth_y1_5', 0.02)) * 100
-                        def_wacc = float(dcf_baseline.get('wacc', 0.10)) * 100
-                        
-                        user_fcf = st.number_input("Initial FCF (TTM) $", value=def_fcf, format="%.0f", step=1000000.0)
-                        user_g_1_5 = st.slider("Growth Y1-5 (%)", min_value=-20.0, max_value=100.0, value=def_growth, step=0.5)
-                        user_g_6_10 = st.slider("Growth Y6-10 (%)", min_value=-20.0, max_value=50.0, value=max(2.0, def_growth/2), step=0.5)
-                        
-                        # Dynamic max for terminal growth (must be < WACC)
-                        wacc_limit = max(1.0, def_wacc - 0.5)
-                        user_tg = st.slider("Terminal Growth (%)", min_value=0.0, max_value=min(5.0, wacc_limit), value=2.5, step=0.1)
-                        user_wacc = st.slider("WACC / Discount Rate (%)", min_value=max(user_tg + 0.1, 5.0), max_value=25.0, value=def_wacc, step=0.1, help=f"Auto-calculated at {def_wacc:.1f}% using CAPM")
-                        
-                with dcf_col2:
-                    st.markdown("#### Valuation Output")
-                    shares = dcf_baseline.get('shares_outstanding')
-                    debt = dcf_baseline.get('total_debt', 0.0)
-                    cash = dcf_baseline.get('total_cash', 0.0)
-                    current_price = dcf_baseline.get('current_price') or summary.get('current_price')
-                    
-                    if not shares or shares <= 0:
-                        st.info("Missing shares outstanding. Showing Enterprise Value only.")
-                    
-                    # Math Engine
-                    wacc_dec = user_wacc / 100.0
-                    g1_dec = user_g_1_5 / 100.0
-                    g2_dec = user_g_6_10 / 100.0
-                    tg_dec = user_tg / 100.0
-                    
-                    cf_projections = []
-                    pv_cfs = []
-                    current_cf = user_fcf
-                    
-                    # Years 1-5
-                    for t in range(1, 6):
-                        current_cf *= (1 + g1_dec)
-                        cf_projections.append(current_cf)
-                        pv_cfs.append(current_cf / ((1 + wacc_dec) ** t))
-                        
-                    # Years 6-10
-                    for t in range(6, 11):
-                        current_cf *= (1 + g2_dec)
-                        cf_projections.append(current_cf)
-                        pv_cfs.append(current_cf / ((1 + wacc_dec) ** t))
-                        
-                    pv_10yr_fcf = sum(pv_cfs)
-                    fcf_yr10 = cf_projections[-1] if cf_projections else 0.0
-                    
-                    # Terminal Value
-                    if wacc_dec > tg_dec:
-                        terminal_value = (fcf_yr10 * (1 + tg_dec)) / (wacc_dec - tg_dec)
-                        pv_tv = terminal_value / ((1 + wacc_dec) ** 10)
-                    else:
-                        pv_tv = 0.0
-                        
-                    enterprise_value = pv_10yr_fcf + pv_tv
-                    equity_value = enterprise_value + cash - debt
-                    
-                    implied_price = equity_value / shares if shares and shares > 0 else 0.0
-                    
-                    # Headline Metric
-                    if implied_price > 0 and current_price and current_price > 0:
-                        delta = (implied_price - current_price) / current_price
-                        delta_color = "normal" if delta >= 0 else "inverse"
-                        st.markdown("""
-                            <style>
-                            [data-testid="stMetricValue"] { font-family: 'Monaco', monospace; font-size: 42px !important; }
-                            </style>
-                        """, unsafe_allow_html=True)
-                        st.metric("DCF Implied Price", f"${implied_price:.2f}", f"{delta*100:+.1f}% vs Current (${current_price:.2f})", delta_color=delta_color)
-                    elif enterprise_value > 0 or enterprise_value < 0:
-                        st.metric("Implied Enterprise Value", f"${enterprise_value:,.0f}", None)
-                        
-                    # Plotly Waterfall
-                    if enterprise_value != 0:
-                        # Scale down massive numbers for cleaner display
-                        scale = 1
-                        suffix = ""
-                        max_val = max(abs(enterprise_value), abs(equity_value))
-                        if max_val >= 1e12:
-                            scale = 1e12
-                            suffix = "T"
-                        elif max_val >= 1e9:
-                            scale = 1e9
-                            suffix = "B"
-                        elif max_val >= 1e6:
-                            scale = 1e6
-                            suffix = "M"
-                            
-                        waterfall = go.Figure(go.Waterfall(
-                            orientation="v",
-                            measure=["relative", "relative", "relative", "relative", "total"],
-                            x=["10Y FCF (PV)", "Terminal (PV)", "Cash", "Debt", "Equity"],
-                            textposition="outside",
-                            text=[
-                                f"${pv_10yr_fcf/scale:,.1f}{suffix}",
-                                f"${pv_tv/scale:,.1f}{suffix}",
-                                f"${cash/scale:,.1f}{suffix}",
-                                f"-${debt/scale:,.1f}{suffix}",
-                                f"${equity_value/scale:,.1f}{suffix}"
-                            ],
-                            textfont=dict(family='Monaco, monospace', size=11, color='#8b949e'),
-                            y=[pv_10yr_fcf, pv_tv, cash, -debt, equity_value],
-                            connector={"line":{"color":"#30363d"}},
-                            decreasing={"marker":{"color":"#ff073a"}},
-                            increasing={"marker":{"color":"#00ff41"}},
-                            totals={"marker":{"color":"#1f77b4"}}
-                        ))
-                        
-                        waterfall.update_layout(
-                            title=None,
-                            waterfallgap=0.3,
-                            plot_bgcolor='rgba(0,0,0,0)',
-                            paper_bgcolor='rgba(0,0,0,0)',
-                            margin=dict(t=30, b=40, l=10, r=10),
-                            height=350,
-                            showlegend=False,
-                            xaxis=dict(showgrid=False, zeroline=False, tickfont=dict(color='#8b949e')),
-                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
-                        )
-                        st.plotly_chart(waterfall, use_container_width=True, config={'displayModeBar': False})
-                
-                # === FUNDAMENTALS AND RATIOS (expander) ===
-                try:
-                    fundamentals = _cached_get_fundamentals_ratios(ticker_input)
-                    with st.expander("Fundamentals and ratios", expanded=False):
-                        if fundamentals is None:
-                            st.caption("Fundamentals unavailable.")
-                        else:
-                            rev = fundamentals.get("revenue_ttm")
-                            vals = [rev, fundamentals.get("gross_margin"), fundamentals.get("operating_margin"), fundamentals.get("net_margin"), fundamentals.get("roe"), fundamentals.get("roa")]
-                            if all(v is None for v in vals):
-                                st.caption("Fundamentals unavailable.")
-                            else:
-                                st.caption(f"**Revenue (TTM):** ${rev:,.0f}" if rev is not None and rev else "**Revenue (TTM):** N/A")
-                                for label, key in [
-                                    ("Gross margin", "gross_margin"),
-                                    ("Operating margin", "operating_margin"),
-                                    ("Net margin", "net_margin"),
-                                    ("ROE", "roe"),
-                                    ("ROA", "roa"),
-                                ]:
-                                    val = fundamentals.get(key)
-                                    if val is not None:
-                                        if "margin" in key:
-                                            st.caption(f"**{label}:** {val * 100:.2f}%" if abs(val) <= 1 else f"**{label}:** {val:.2f}%")
-                                        else:
-                                            st.caption(f"**{label}:** {val * 100:.2f}%" if abs(val) <= 1 else f"**{label}:** {val:.2f}")
-                                    else:
-                                        st.caption(f"**{label}:** N/A")
-                except Exception:
-                    with st.expander("Fundamentals and ratios", expanded=False):
-                        st.caption("Fundamentals unavailable.")
-                
-                # === TRADINGVIEW-STYLE CHART ===
-                st.markdown("---")
-                st.markdown("### TradingView-style analysis")
-                st.caption("Multi-panel momentum analysis with supply/demand zones and trading signals.")
-                
-                # Timeframe selector for TradingView chart
-                tv_col1, tv_col2 = st.columns([1, 4])
-                with tv_col1:
-                    tv_timeframe = st.selectbox(
-                        "Timeframe",
-                        options=['1W', '1D', '4H'],
+                    comp_sort = st.radio(
+                        "Sort",
+                        options=["By industry & size", "By description match"],
                         index=0,
-                        key="tv_timeframe",
-                        help="Select chart timeframe"
+                        key=f"competitors_sort_{ticker_input}",
+                        horizontal=True,
                     )
-                
-                # Determine data to display based on timeframe
-                # For weekly, resample daily data to weekly
-                if tv_timeframe == '1W':
-                    # Resample to weekly data
-                    df_tv = df.copy()
-                    df_tv_resampled = df_tv.resample('W').agg({
-                        'Open': 'first',
-                        'High': 'max',
-                        'Low': 'min',
-                        'Close': 'last',
-                        'Volume': 'sum'
-                    }).dropna()
-                    # Take last 52 weeks (1 year)
-                    df_tv_display = df_tv_resampled.tail(52)
-                    timeframe_label = '1W'
-                elif tv_timeframe == '4H':
-                    # For 4H, use daily data but show more recent period
-                    df_tv_display = df.tail(60)  # ~60 days
-                    timeframe_label = '4H (Daily proxy)'
-                else:  # 1D
-                    df_tv_display = df.tail(126)  # 6 months daily
-                    timeframe_label = '1D'
-                
-                # Use cached TradingView signals if fresh; otherwise compute and auto-save
-                df_tv_with_signals = load_tv_signals_from_cache(ticker_input, tv_timeframe)
-                if df_tv_with_signals is None:
-                    df_tv_with_signals = calculate_tradingview_signals(df_tv_display)
-                    save_tv_signals_to_cache(ticker_input, df_tv_with_signals, tv_timeframe)
-                
-                # Create and display TradingView chart
-                tv_fig = create_tradingview_chart(df_tv_with_signals, ticker_input, timeframe_label)
-                st.plotly_chart(tv_fig, use_container_width=True, config={
-                    'scrollZoom': True,
-                    'displayModeBar': True,
-                    'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraseshape'],
-                    'toImageButtonOptions': {
-                        'format': 'png',
-                        'filename': f'{ticker_input}_tradingview_{tv_timeframe}',
-                        'height': 900,
-                        'width': 1400,
-                        'scale': 2
-                    }
-                })
-                
-                # Show current signal status
-                tv_signal_col1, tv_signal_col2, tv_signal_col3 = st.columns(3)
-                
-                with tv_signal_col1:
-                    current_momentum = df_tv_with_signals['TV_Momentum'].iloc[-1] if 'TV_Momentum' in df_tv_with_signals.columns else 0
-                    st.metric("Momentum", f"{current_momentum:.1f}")
-                
-                with tv_signal_col2:
-                    current_osc = df_tv_with_signals['TV_Oscillator'].iloc[-1] if 'TV_Oscillator' in df_tv_with_signals.columns else 0
-                    st.metric("Oscillator", f"{current_osc:.1f}")
-                
-                with tv_signal_col3:
-                    # Get latest TV signal
-                    tv_signals = df_tv_with_signals[df_tv_with_signals['TV_Signal'] != '']
-                    if not tv_signals.empty:
-                        latest_tv_signal = tv_signals['TV_Signal'].iloc[-1]
-                        latest_tv_strength = tv_signals['TV_Signal_Strength'].iloc[-1]
-                        st.metric("Latest signal", f"{latest_tv_signal} ({latest_tv_strength})")
-                    else:
-                        st.metric("Latest signal", "None")
-                
-                # TradingView chart interpretation guide
-                with st.expander("TradingView chart guide"):
-                    st.markdown("""
-                    **Top Panel - Momentum Oscillator (-50 to +50):**
-                    - Combines Stochastic RSI and Rate of Change
-                    - **Cyan fill**: Positive momentum (bullish)
-                    - **Pink fill**: Negative momentum (bearish)
-                    - **Pink diamonds**: Potential sell signals at peaks
-                    
-                    **Middle Panel - Price Action:**
-                    - **Cyan/Teal candles**: Bullish (close > open)
-                    - **Pink/Red candles**: Bearish (close < open)
-                    - **Pink shaded zones**: Supply (upper) and Demand (lower) zones
-                    - **Gold line**: 50-period moving average support
-                    - **Cyan diamonds**: Buy signals
-                    - **Pink diamonds**: Sell signals
-                    
-                    **Bottom Panel - Secondary Oscillator (-40 to +40):**
-                    - MACD-style momentum histogram
-                    - Confirms signals from top panel
-                    - **Cyan diamonds**: Buy confirmation
-                    
-                    **Signal Logic:**
-                    | Condition | Signal Type |
-                    |-----------|-------------|
-                    | Price at demand zone + both oscillators negative turning up | **STRONG BUY** |
-                    | Price near lower band + momentum turning up | **MODERATE BUY** |
-                    | Price at supply zone + both oscillators positive turning down | **STRONG SELL** |
-                    | Price near upper band + momentum turning down | **MODERATE SELL** |
-                    
-                    **"Triple Blue" Alignment:**
-                    When price, momentum, and oscillator are all positive/bullish simultaneously, this indicates strong upward momentum.
-                    """)
-                
-                # Save button for TradingView signals
-                tv_cache_status = check_tv_signals_in_cache(ticker_input, tv_timeframe)
-                
-                tv_save_col1, tv_save_col2 = st.columns([3, 1])
-                with tv_save_col1:
-                    if tv_cache_status['has_data']:
-                        tv_note = "Fresh" if tv_cache_status["is_fresh"] else "Stale"
-                        cache_time = (
-                            tv_cache_status["timestamp"].strftime("%Y-%m-%d %H:%M")
-                            if tv_cache_status["timestamp"]
-                            else "Unknown"
-                        )
-                        st.caption(
-                            f"**{tv_note}:** **{ticker_input}** TradingView signals cached (saved: {cache_time})"
-                        )
-                    else:
-                        st.caption(f"**{ticker_input}** TradingView signals not saved yet")
-                
-                with tv_save_col2:
-                    if tv_cache_status['is_fresh']:
-                        st.success("Cached")
-                    else:
-                        if st.button("Save TV signals", key=f"save_tv_{ticker_input}_{tv_timeframe}", help="Save TradingView signals to cache"):
-                            if save_tv_signals_to_cache(ticker_input, df_tv_with_signals, tv_timeframe):
-                                st.success(f"Saved TradingView signals for {ticker_input}")
-                                st.rerun()
-                            else:
-                                st.error("Failed to save TradingView signals.")
-                
-                # === OPTIONS · ATM IV TERM (BVOL / OVME-lite) ===
-                st.markdown("---")
-                st.markdown("### Options · ATM implied vol term structure")
-                st.caption(
-                    "Implied volatility at the listed strike nearest spot (call/put average when both exist). "
-                    "Source: Yahoo Finance option chains—delayed/aggregated, not a dealer surface."
-                )
-                iv_table_df = None
-                try:
-                    _spot_iv = float(summary.get("current_price") or 0.0)
-                    _sk = round(_spot_iv, 2) if _spot_iv > 0 else 0.0
-                    iv_res = _cached_iv_term_structure(ticker_input, _sk)
-                    if iv_res.data_warnings:
-                        st.caption("Notes: " + " ".join(iv_res.data_warnings[:6]))
-                    _iv_rows = [
-                        {
-                            "Expiry": p.expiry,
-                            "DTE": p.dte,
-                            "ATM strike": p.strike,
-                            "IV %": round(p.iv_atm * 100.0, 2) if p.iv_atm is not None else None,
-                            "IV src": p.source,
-                        }
-                        for p in iv_res.points
-                        if p.iv_atm is not None
-                    ]
-                    if _iv_rows:
-                        _df_iv = pd.DataFrame(_iv_rows)
-                        iv_table_df = _df_iv
-                        _insight = (
-                            f"{ticker_input}: ATM IV across {len(_df_iv)} expiries vs days to expiry"
-                            + (f" (spot ≈ ${iv_res.spot_used:,.2f})" if iv_res.spot_used else "")
-                        )
-                        fig_iv = go.Figure(
-                            go.Scatter(
-                                x=_df_iv["DTE"],
-                                y=_df_iv["IV %"],
-                                mode="lines+markers",
-                                line=dict(color="#c084fc", width=2),
-                                marker=dict(size=8, color="#e8a838", line=dict(width=1, color="rgba(15,23,42,0.5)")),
-                                hovertemplate="DTE %{x} · IV %{y:.1f}%<extra></extra>",
-                            )
-                        )
-                        fig_iv.update_layout(
-                            title={"text": _insight, "font": {"family": "Sora", "size": 14, "color": "#f8fafc"}},
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            font_color="#cbd5e1",
-                            font_family="IBM Plex Sans",
-                            xaxis=dict(title="Days to expiry", gridcolor="rgba(148,163,184,0.12)"),
-                            yaxis=dict(title="Implied vol (ATM, %)", gridcolor="rgba(148,163,184,0.12)"),
-                            margin=dict(l=8, r=8, t=56, b=40),
-                        )
-                        st.plotly_chart(fig_iv, use_container_width=True)
-                        with st.expander("IV term table", expanded=False):
+                    sort_by_val = "description" if comp_sort == "By description match" else "industry_size"
+                    if "peers_refresh_key" not in st.session_state:
+                        st.session_state["peers_refresh_key"] = 0
+                    ref_col1, ref_col2 = st.columns([4, 1])
+                    with ref_col2:
+                        if st.button("Refresh", key=f"competitors_refresh_{ticker_input}", help="Clear peers cache and reload"):
+                            clear_peers_cache(ticker_input)
+                            st.session_state["peers_refresh_key"] = st.session_state.get("peers_refresh_key", 0) + 1
+                            st.rerun()
+                    try:
+                        comp_result = get_competitors(ticker_input, sort_by_val, max_peers=5)
+                        peers_list = comp_result.get("peers") or []
+                        fallback_used = comp_result.get("fallback_used", "industry")
+                        used_sector_fallback = comp_result.get("used_sector_fallback", False)
+                        if fallback_used == "sector":
+                            st.caption("Few peers in this industry; showing sector-level (and similar size) peers.")
+                        elif fallback_used == "sector_wide_cap":
+                            st.caption("Showing sector-level peers with wider size range.")
+                        elif fallback_used == "stock_peers":
+                            st.caption("Using FMP stock-peers (company-screener not available on your plan). Same sector and similar market cap.")
+                        elif used_sector_fallback:
+                            st.caption("Showing sector-level peers (industry not matched).")
+                        if not peers_list:
+                            st.info("No peers found for this industry/market cap. Try another ticker or refresh.")
+                        else:
+                            def _fmt_mc(mc):
+                                if mc is None or mc <= 0:
+                                    return "—"
+                                if mc >= 1e12:
+                                    return f"${mc / 1e12:.2f}T"
+                                if mc >= 1e9:
+                                    return f"${mc / 1e9:.2f}B"
+                                if mc >= 1e6:
+                                    return f"${mc / 1e6:.2f}M"
+                                return f"${mc:,.0f}"
+                            rows = []
+                            for p in peers_list:
+                                ticker_display = p.get("ticker") or "—"
+                                name_display = (p.get("name") or ticker_display)[:50]
+                                sector_display = (p.get("sector") or "—")[:20]
+                                industry_display = (p.get("industry") or "—")[:25]
+                                mc_display = _fmt_mc(p.get("market_cap"))
+                                pe_display = f"{p['pe_ratio']:.1f}" if p.get("pe_ratio") is not None else "—"
+                                rev = p.get("revenue_ttm")
+                                rev_display = f"${rev / 1e9:.2f}B" if rev and rev >= 1e9 else (f"${rev / 1e6:.0f}M" if rev and rev >= 1e6 else ("—" if rev is None else f"${rev:,.0f}"))
+                                match_display = str(p.get("description_match_score")) if p.get("description_match_score") is not None else "—"
+                                rows.append({
+                                    "Ticker": ticker_display,
+                                    "Name": name_display,
+                                    "Sector": sector_display,
+                                    "Industry": industry_display,
+                                    "Market cap": mc_display,
+                                    "P/E": pe_display,
+                                    "Revenue (TTM)": rev_display,
+                                    "Match": match_display,
+                                })
+                            df_comp = pd.DataFrame(rows)
+                            if sort_by_val != "description":
+                                df_comp = df_comp.drop(columns=["Match"], errors="ignore")
                             st.dataframe(
-                                _gft_tabular_styler(_df_iv),
+                                _gft_tabular_styler(df_comp),
                                 use_container_width=True,
                                 hide_index=True,
                             )
-                    else:
-                        st.info("No ATM IV points returned for this symbol (try another ticker or check chain availability).")
-                except Exception as _iv_exc:
-                    st.warning(f"Options IV section unavailable: {_iv_exc}")
-                    iv_table_df = None
-
-                with st.expander("Options · Black–Scholes (European theory price)", expanded=False):
-                    st.caption(
-                        "Black–Scholes with continuous yield q. Default rate uses cached ^TNX last close (percent points). "
-                        "For comparison only—not a live quote or execution price."
-                    )
-                    _tnx_bs = _cached_tnx_last_percent()
-                    _spot_default = float(summary.get("current_price") or 100.0)
-                    bs_spot = st.number_input(
-                        "Spot ($)",
-                        min_value=0.01,
-                        value=max(0.01, _spot_default),
-                        key=f"bs_spot_{ticker_input}",
-                    )
-                    r_pct = st.number_input(
-                        "Risk-free (%, annual)",
-                        min_value=0.0,
-                        max_value=25.0,
-                        value=float(_tnx_bs),
-                        step=0.05,
-                        key=f"bs_r_{ticker_input}",
-                        help="Default seeded from ^TNX last yield.",
-                    )
-                    q_pct = st.number_input(
-                        "Dividend yield q (%, annual)",
-                        min_value=0.0,
-                        max_value=20.0,
-                        value=0.0,
-                        step=0.05,
-                        key=f"bs_q_{ticker_input}",
-                    )
-                    _preset_labels = ["Manual"]
-                    if iv_table_df is not None and not iv_table_df.empty:
-                        _preset_labels.extend(
-                            f"{row['Expiry']} · DTE {int(row['DTE'])} · IV {row['IV %']}% · K {row['ATM strike']}"
-                            for _, row in iv_table_df.iterrows()
-                        )
-                    pick = st.selectbox(
-                        "Inputs from IV table",
-                        _preset_labels,
-                        key=f"bs_pick_{ticker_input}",
-                    )
-                    if pick == "Manual":
-                        c_a, c_b, c_c = st.columns(3)
-                        with c_a:
-                            strike_bs = st.number_input(
-                                "Strike ($)",
-                                min_value=0.01,
-                                value=max(0.01, _spot_default),
-                                key=f"bs_k_{ticker_input}",
-                            )
-                        with c_b:
-                            dte_bs = st.number_input(
-                                "Days to expiry",
-                                min_value=1,
-                                max_value=3650,
-                                value=30,
-                                key=f"bs_dte_{ticker_input}",
-                            )
-                        with c_c:
-                            iv_pct_bs = st.number_input(
-                                "IV (%, annual)",
-                                min_value=0.1,
-                                max_value=500.0,
-                                value=35.0,
-                                key=f"bs_iv_{ticker_input}",
-                            )
-                    else:
-                        _pi = _preset_labels.index(pick) - 1
-                        _row = iv_table_df.iloc[_pi]
-                        strike_bs = float(_row["ATM strike"])
-                        dte_bs = int(_row["DTE"])
-                        iv_pct_bs = float(_row["IV %"])
-                        st.caption(
-                            f"Preset: strike **{strike_bs:.2f}** · DTE **{dte_bs}** · IV **{iv_pct_bs:.2f}%**"
-                        )
-                    _T = float(dte_bs) / 365.0
-                    _sig = float(iv_pct_bs) / 100.0
-                    _r = float(r_pct) / 100.0
-                    _q = float(q_pct) / 100.0
-                    _bs_out = black_scholes_european(bs_spot, strike_bs, _T, _r, _sig, _q)
-                    m1, m2, m3 = st.columns(3)
-                    with m1:
-                        st.metric("Call (theory)", f"${_bs_out.call_price:.4f}")
-                    with m2:
-                        st.metric("Put (theory)", f"${_bs_out.put_price:.4f}")
-                    with m3:
-                        st.caption(f"d1={_bs_out.d1:.3f} · d2={_bs_out.d2:.3f}")
-
-                # === COMPETITORS ===
-                st.markdown("---")
-                st.markdown("### Competitors")
-                st.caption("Same industry and similar market cap; optional sort by description match.")
-                with st.expander("How we pick peers", expanded=False):
-                    st.markdown("""
-                    Peers are chosen using **industry** and **similar market cap** (via FMP screener).
-                    When your company's industry doesn't match our data provider's list, we use sector-level peers and note it above the table.
-                    You can sort by **description match** to rank by text similarity to the company description (same candidate set).
-                    Matching uses the **full** company description (not the shortened preview in the profile box above).
-                    Description match ranks by text similarity, not verified competitive relationship; results can include companies that sound similar but operate in different segments.
-                    """)
-                comp_sort = st.radio(
-                    "Sort",
-                    options=["By industry & size", "By description match"],
-                    index=0,
-                    key=f"competitors_sort_{ticker_input}",
-                    horizontal=True,
-                )
-                sort_by_val = "description" if comp_sort == "By description match" else "industry_size"
-                if "peers_refresh_key" not in st.session_state:
-                    st.session_state["peers_refresh_key"] = 0
-                ref_col1, ref_col2 = st.columns([4, 1])
-                with ref_col2:
-                    if st.button("Refresh", key=f"competitors_refresh_{ticker_input}", help="Clear peers cache and reload"):
-                        clear_peers_cache(ticker_input)
-                        st.session_state["peers_refresh_key"] = st.session_state.get("peers_refresh_key", 0) + 1
-                        st.rerun()
-                try:
-                    comp_result = get_competitors(ticker_input, sort_by_val, max_peers=5)
-                    peers_list = comp_result.get("peers") or []
-                    fallback_used = comp_result.get("fallback_used", "industry")
-                    used_sector_fallback = comp_result.get("used_sector_fallback", False)
-                    if fallback_used == "sector":
-                        st.caption("Few peers in this industry; showing sector-level (and similar size) peers.")
-                    elif fallback_used == "sector_wide_cap":
-                        st.caption("Showing sector-level peers with wider size range.")
-                    elif fallback_used == "stock_peers":
-                        st.caption("Using FMP stock-peers (company-screener not available on your plan). Same sector and similar market cap.")
-                    elif used_sector_fallback:
-                        st.caption("Showing sector-level peers (industry not matched).")
-                    if not peers_list:
-                        st.info("No peers found for this industry/market cap. Try another ticker or refresh.")
-                    else:
-                        def _fmt_mc(mc):
-                            if mc is None or mc <= 0:
-                                return "—"
-                            if mc >= 1e12:
-                                return f"${mc / 1e12:.2f}T"
-                            if mc >= 1e9:
-                                return f"${mc / 1e9:.2f}B"
-                            if mc >= 1e6:
-                                return f"${mc / 1e6:.2f}M"
-                            return f"${mc:,.0f}"
-                        rows = []
-                        for p in peers_list:
-                            ticker_display = p.get("ticker") or "—"
-                            name_display = (p.get("name") or ticker_display)[:50]
-                            sector_display = (p.get("sector") or "—")[:20]
-                            industry_display = (p.get("industry") or "—")[:25]
-                            mc_display = _fmt_mc(p.get("market_cap"))
-                            pe_display = f"{p['pe_ratio']:.1f}" if p.get("pe_ratio") is not None else "—"
-                            rev = p.get("revenue_ttm")
-                            rev_display = f"${rev / 1e9:.2f}B" if rev and rev >= 1e9 else (f"${rev / 1e6:.0f}M" if rev and rev >= 1e6 else ("—" if rev is None else f"${rev:,.0f}"))
-                            match_display = str(p.get("description_match_score")) if p.get("description_match_score") is not None else "—"
-                            rows.append({
-                                "Ticker": ticker_display,
-                                "Name": name_display,
-                                "Sector": sector_display,
-                                "Industry": industry_display,
-                                "Market cap": mc_display,
-                                "P/E": pe_display,
-                                "Revenue (TTM)": rev_display,
-                                "Match": match_display,
-                            })
-                        df_comp = pd.DataFrame(rows)
-                        if sort_by_val != "description":
-                            df_comp = df_comp.drop(columns=["Match"], errors="ignore")
-                        st.dataframe(
-                            _gft_tabular_styler(df_comp),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-                        st.caption("Analyze a peer:")
-                        peer_btns = st.columns(min(len(peers_list), 8))
-                        for i, p in enumerate(peers_list[:8]):
-                            pt = p.get("ticker")
-                            if pt and i < len(peer_btns):
-                                with peer_btns[i]:
-                                    if st.button(f"→ {pt}", key=f"analyze_peer_{ticker_input}_{pt}", help=f"Load {pt} in search"):
-                                        st.session_state["market_analysis_ticker"] = pt
-                                        st.rerun()
-                        with st.expander("Edit peers", expanded=False):
-                            st.caption("Custom additions/removals are saved and applied to future loads.")
-                            add_peer = st.text_input("Add ticker to always include", placeholder="e.g. MSFT", key=f"add_peer_{ticker_input}").upper().strip()
-                            if st.button("Add", key=f"add_peer_btn_{ticker_input}") and add_peer:
-                                try:
-                                    db = get_db_session()
-                                    from models import PeerOverride
-                                    existing = db.query(PeerOverride).filter(
-                                        PeerOverride.focus_ticker == ticker_input,
-                                        PeerOverride.peer_ticker == add_peer,
-                                    ).first()
-                                    if not existing:
-                                        db.add(PeerOverride(focus_ticker=ticker_input, peer_ticker=add_peer, is_excluded=0))
-                                        db.commit()
-                                        st.success(f"Added {add_peer} to peers for {ticker_input}.")
-                                    else:
-                                        existing.is_excluded = 0
-                                        db.commit()
-                                        st.success(f"{add_peer} is already in peers.")
-                                    db.close()
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Failed to add: {e}")
-                            for p in peers_list:
+                            st.caption("Analyze a peer:")
+                            peer_btns = st.columns(min(len(peers_list), 8))
+                            for i, p in enumerate(peers_list[:8]):
                                 pt = p.get("ticker")
-                                if not pt:
-                                    continue
-                                c1, c2 = st.columns([3, 1])
-                                with c2:
-                                    if st.button("Remove", key=f"remove_peer_{ticker_input}_{pt}"):
-                                        try:
-                                            db = get_db_session()
-                                            from models import PeerOverride
-                                            row = db.query(PeerOverride).filter(
-                                                PeerOverride.focus_ticker == ticker_input,
-                                                PeerOverride.peer_ticker == pt,
-                                            ).first()
-                                            if row:
-                                                row.is_excluded = 1
-                                            else:
-                                                db.add(PeerOverride(focus_ticker=ticker_input, peer_ticker=pt, is_excluded=1))
-                                            db.commit()
-                                            db.close()
-                                            clear_peers_cache(ticker_input)
+                                if pt and i < len(peer_btns):
+                                    with peer_btns[i]:
+                                        if st.button(f"→ {pt}", key=f"analyze_peer_{ticker_input}_{pt}", help=f"Load {pt} in search"):
+                                            st.session_state["market_analysis_ticker"] = pt
                                             st.rerun()
-                                        except Exception as e:
-                                            st.error(f"Failed to remove: {e}")
-                                with c1:
-                                    st.caption(f"**{pt}** — {p.get('name', '')[:40]}")
-                except Exception as e:
-                    st.warning(f"Could not load competitors: {e}")
-                
-                # === NEWS (expander) ===
-                try:
-                    news_items = _cached_fetch_company_news(ticker_input, 10)
-                    with st.expander("News", expanded=False):
-                        if not news_items:
-                            st.caption("No recent headlines.")
-                        else:
-                            for n in news_items:
-                                headline = n.get("headline") or "No title"
-                                url = n.get("url") or "#"
-                                source = n.get("source") or ""
-                                dt = n.get("datetime")
-                                if isinstance(dt, (int, float)):
-                                    from datetime import datetime as _dt
+                            with st.expander("Edit peers", expanded=False):
+                                st.caption("Custom additions/removals are saved and applied to future loads.")
+                                add_peer = st.text_input("Add ticker to always include", placeholder="e.g. MSFT", key=f"add_peer_{ticker_input}").upper().strip()
+                                if st.button("Add", key=f"add_peer_btn_{ticker_input}") and add_peer:
                                     try:
-                                        dt = _dt.fromtimestamp(dt).strftime("%Y-%m-%d %H:%M") if dt else ""
-                                    except Exception:
+                                        db = get_db_session()
+                                        from models import PeerOverride
+                                        existing = db.query(PeerOverride).filter(
+                                            PeerOverride.focus_ticker == ticker_input,
+                                            PeerOverride.peer_ticker == add_peer,
+                                        ).first()
+                                        if not existing:
+                                            db.add(PeerOverride(focus_ticker=ticker_input, peer_ticker=add_peer, is_excluded=0))
+                                            db.commit()
+                                            st.success(f"Added {add_peer} to peers for {ticker_input}.")
+                                        else:
+                                            existing.is_excluded = 0
+                                            db.commit()
+                                            st.success(f"{add_peer} is already in peers.")
+                                        db.close()
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Failed to add: {e}")
+                                for p in peers_list:
+                                    pt = p.get("ticker")
+                                    if not pt:
+                                        continue
+                                    c1, c2 = st.columns([3, 1])
+                                    with c2:
+                                        if st.button("Remove", key=f"remove_peer_{ticker_input}_{pt}"):
+                                            try:
+                                                db = get_db_session()
+                                                from models import PeerOverride
+                                                row = db.query(PeerOverride).filter(
+                                                    PeerOverride.focus_ticker == ticker_input,
+                                                    PeerOverride.peer_ticker == pt,
+                                                ).first()
+                                                if row:
+                                                    row.is_excluded = 1
+                                                else:
+                                                    db.add(PeerOverride(focus_ticker=ticker_input, peer_ticker=pt, is_excluded=1))
+                                                db.commit()
+                                                db.close()
+                                                clear_peers_cache(ticker_input)
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"Failed to remove: {e}")
+                                    with c1:
+                                        st.caption(f"**{pt}** — {p.get('name', '')[:40]}")
+                    except Exception as e:
+                        st.warning(f"Could not load competitors: {e}")
+                
+                    # === NEWS (expander) ===
+                    try:
+                        news_items = _cached_fetch_company_news(ticker_input, 10)
+                        st.markdown("### News")
+                        if True:
+                            if not news_items:
+                                st.caption("No recent headlines.")
+                            else:
+                                for n in news_items:
+                                    headline = n.get("headline") or "No title"
+                                    url = n.get("url") or "#"
+                                    source = n.get("source") or ""
+                                    dt = n.get("datetime")
+                                    if isinstance(dt, (int, float)):
+                                        from datetime import datetime as _dt
+                                        try:
+                                            dt = _dt.fromtimestamp(dt).strftime("%Y-%m-%d %H:%M") if dt else ""
+                                        except Exception:
+                                            dt = str(dt) if dt else ""
+                                    else:
                                         dt = str(dt) if dt else ""
-                                else:
-                                    dt = str(dt) if dt else ""
-                                if url:
-                                    st.markdown(f"- [{headline[:80]}{'...' if len(headline) > 80 else ''}]({url})")
-                                else:
-                                    st.markdown(f"- {headline[:80]}{'...' if len(headline) > 80 else ''}")
-                                if source or dt:
-                                    st.caption(f"  {source} {dt}".strip())
-                except Exception:
-                    with st.expander("News", expanded=False):
-                        st.caption("News unavailable.")
+                                    if url:
+                                        st.markdown(f"- [{headline[:80]}{'...' if len(headline) > 80 else ''}]({url})")
+                                    else:
+                                        st.markdown(f"- {headline[:80]}{'...' if len(headline) > 80 else ''}")
+                                    if source or dt:
+                                        st.caption(f"  {source} {dt}".strip())
+                    except Exception:
+                        st.markdown("### News")
+                        if True:
+                            st.caption("News unavailable.")
     
     # === WATCHLIST SECTION ===
     st.markdown("---")

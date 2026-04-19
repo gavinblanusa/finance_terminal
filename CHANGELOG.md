@@ -3,7 +3,25 @@
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
 
+## [0.1.8.0] - 2026-04-19
+
+### Added
+
+- **Market Analysis tabbed layout:** Refactored the market analysis page from a single long-scroll view into a three-tab terminal interface (`Technicals`, `Valuation`, `Corporate Activity`), matching the density and navigation patterns of professional finance terminals.
+- **Global Anchor Header:** Persistent ticker, price, RSI, SMA, and algorithmic signal badge stays visible across all tabs so key context is never lost when drilling into fundamentals or corporate filings.
+- **Design system update (`DESIGN.md`):** Formally adopted the Tabbed Terminal paradigm for high-density data pages with scoped DeltaGenerator requirements documented to prevent future leakage bugs.
+
+### Changed
+
+- **Chart height:** TradingView-styled main chart reduced from `900px` to `600px` for better ergonomics on standard laptop screens.
+- **Tab scoping:** `Corporate Activity` content (company profile and insider transactions) moved out of bare expanders into a proper `with tab_corp:` context, preventing rendering leakage to global page scope.
+
+### Fixed
+
+- **UI tab leakage:** Company profile and insider transactions were rendering globally below all tabs regardless of which tab was selected. Root cause was indirection via `if True:` wrapper blocks that caused Streamlit's internal block tracker to escape the tab DeltaGenerator context prematurely. Fixed by removing the wrapper blocks and aligning all content to the correct indentation depth.
+
 ## [0.1.7.1] - 2026-04-18
+
 
 ### Fixed
 - **IPO Data Integrity:** Fixed `fetch_historical_price_openbb` to use a 14-day lookback window. This ensures it successfully fetches the correct historical IPO debut price rather than silently defaulting to the current market price.
