@@ -15,6 +15,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date, timedelta
 import html
+from textwrap import dedent
 from decimal import Decimal
 from sqlalchemy.orm import Session
 from db import get_db_session, init_db
@@ -330,7 +331,7 @@ st.set_page_config(
 # Minimal CSS overrides (base theme is in .streamlit/config.toml)
 # Dashboard sections use a "terminal noir" treatment: amber accent, Sora + IBM Plex Sans.
 st.markdown(
-    """
+    dedent("""
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@500;600;700&display=swap" rel="stylesheet">
@@ -342,9 +343,6 @@ st.markdown(
     }
     @media (prefers-reduced-motion: reduce) {
         .gft-dash-section { animation: none !important; }
-    }
-    .stButton>button:hover {
-        background-color: #1565C0;
     }
     .urgent-alert {
         background-color: #FF4B4B;
@@ -375,8 +373,23 @@ st.markdown(
         max-width: 28rem;
     }
     :root {
-        --gft-research-accent: #2dd4bf;
-        --gft-exec-accent: #a5b4fc;
+        --gft-bg: #0E1117;
+        --gft-surface: #262730;
+        --gft-surface-deep: #151922;
+        --gft-surface-soft: rgba(38, 39, 48, 0.64);
+        --gft-border: rgba(148, 163, 184, 0.28);
+        --gft-border-strong: rgba(232, 168, 56, 0.42);
+        --gft-text: #F8FAFC;
+        --gft-muted: #94A3B8;
+        --gft-muted-2: #64748B;
+        --gft-accent: #E8A838;
+        --gft-accent-hover: #FBBF24;
+        --gft-accent-soft: rgba(232, 168, 56, 0.12);
+        --gft-research-accent: #2DD4BF;
+        --gft-exec-accent: #A5B4FC;
+        --gft-positive: #4ADE80;
+        --gft-negative: #F87171;
+        --gft-radius: 6px;
     }
     .gft-dash-section-stack-research {
         border-color: rgba(45, 212, 191, 0.24) !important;
@@ -607,8 +620,45 @@ st.markdown(
         background: rgba(38, 39, 48, 0.48);
     }
     .gft-dash-msg-info .gft-dash-msg-title { color: #94a3b8; }
+
     </style>
-    """,
+    """),
+    unsafe_allow_html=True,
+)
+
+GLOBAL_STREAMLIT_CHROME_CSS = """
+button,input,textarea,[data-baseweb="select"]{font-family:'IBM Plex Sans',sans-serif;}
+button:focus-visible,input:focus-visible,textarea:focus-visible,[role="tab"]:focus-visible,[data-baseweb="select"] *:focus-visible,section[data-testid="stSidebar"] label:focus-within{outline:2px solid var(--gft-accent)!important;outline-offset:2px!important;box-shadow:0 0 0 3px rgba(232,168,56,.16)!important;}
+[data-testid="stTabs"] [role="tablist"]{gap:.25rem;border-bottom:1px solid rgba(148,163,184,.18);overflow-x:auto;scrollbar-width:thin;}
+[data-testid="stTabs"] [role="tab"]{min-height:2.4rem;padding:.45rem .75rem;color:var(--gft-muted);border-radius:var(--gft-radius) var(--gft-radius) 0 0;border-bottom:2px solid transparent;white-space:nowrap;transition:background-color 120ms ease-out,color 120ms ease-out,border-color 120ms ease-out;}
+[data-testid="stTabs"] [role="tab"]:hover{color:var(--gft-text);background:var(--gft-accent-soft);}
+[data-testid="stTabs"] [role="tab"][aria-selected="true"]{color:var(--gft-accent);border-bottom-color:var(--gft-accent);background:rgba(38,39,48,.46);}
+section[data-testid="stSidebar"] h1,section[data-testid="stSidebar"] h2,section[data-testid="stSidebar"] h3{font-family:'Sora',sans-serif;color:var(--gft-text);}
+section[data-testid="stSidebar"] [data-testid="stRadio"]>div{gap:.25rem;}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label{min-height:2.3rem;padding:.35rem .55rem .35rem .7rem;border:1px solid transparent;border-left:3px solid transparent;border-radius:var(--gft-radius);color:var(--gft-muted);transition:background-color 120ms ease-out,border-color 120ms ease-out,color 120ms ease-out;}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label:hover{background:rgba(148,163,184,.08);color:var(--gft-text);}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked){background:var(--gft-accent-soft);border-color:rgba(232,168,56,.24);border-left-color:var(--gft-accent);color:var(--gft-text);}
+[data-testid="stButton"] button,[data-testid="stDownloadButton"] button,[data-testid="stFormSubmitButton"] button{min-height:2.35rem;border-radius:var(--gft-radius);border:1px solid var(--gft-border);background:rgba(38,39,48,.72);color:var(--gft-text);font-weight:500;transition:background-color 120ms ease-out,border-color 120ms ease-out,color 120ms ease-out,transform 80ms ease-out;}
+[data-testid="stButton"] button:hover,[data-testid="stDownloadButton"] button:hover,[data-testid="stFormSubmitButton"] button:hover{border-color:var(--gft-border-strong);background:var(--gft-accent-soft);color:var(--gft-text);}
+[data-testid="stButton"] button:active,[data-testid="stDownloadButton"] button:active,[data-testid="stFormSubmitButton"] button:active{transform:translateY(1px);}
+[data-testid="stButton"] button[kind="primary"],[data-testid="stButton"] button[data-testid="baseButton-primary"],[data-testid="stDownloadButton"] button[kind="primary"],[data-testid="stDownloadButton"] button[data-testid="baseButton-primary"],[data-testid="stFormSubmitButton"] button[kind="primary"],[data-testid="stFormSubmitButton"] button[data-testid="baseButton-primary"]{background:var(--gft-accent);border-color:var(--gft-accent);color:#0F172A;font-weight:700;}
+[data-testid="stButton"] button[kind="primary"]:hover,[data-testid="stButton"] button[data-testid="baseButton-primary"]:hover,[data-testid="stDownloadButton"] button[kind="primary"]:hover,[data-testid="stDownloadButton"] button[data-testid="baseButton-primary"]:hover,[data-testid="stFormSubmitButton"] button[kind="primary"]:hover,[data-testid="stFormSubmitButton"] button[data-testid="baseButton-primary"]:hover{background:var(--gft-accent-hover);border-color:var(--gft-accent-hover);color:#0F172A;}
+[data-testid="stButton"] button:disabled,[data-testid="stDownloadButton"] button:disabled,[data-testid="stFormSubmitButton"] button:disabled{opacity:.48;cursor:not-allowed;}
+[data-testid="stTextInput"] input,[data-testid="stNumberInput"] input,[data-testid="stDateInput"] input,[data-testid="stTextArea"] textarea,[data-baseweb="select"]>div{background:var(--gft-surface-deep);color:var(--gft-text);border-color:var(--gft-border);border-radius:var(--gft-radius);}
+[data-testid="stTextInput"] input:hover,[data-testid="stNumberInput"] input:hover,[data-testid="stDateInput"] input:hover,[data-testid="stTextArea"] textarea:hover,[data-baseweb="select"]>div:hover{border-color:rgba(232,168,56,.32);}
+[data-testid="stTextInput"] input:focus,[data-testid="stNumberInput"] input:focus,[data-testid="stDateInput"] input:focus,[data-testid="stTextArea"] textarea:focus{border-color:var(--gft-accent)!important;box-shadow:0 0 0 3px rgba(232,168,56,.14)!important;}
+[data-testid="stTextInput"] input::placeholder,[data-testid="stTextArea"] textarea::placeholder{color:var(--gft-muted-2);opacity:1;}
+[data-testid="stCheckbox"] label,[data-testid="stRadio"] label{color:var(--gft-muted);}
+[data-testid="stMetric"]{padding:.55rem .65rem;border:1px solid rgba(148,163,184,.16);border-radius:var(--gft-radius);background:rgba(38,39,48,.32);}
+[data-testid="stMetricLabel"]{color:var(--gft-muted);font-family:'IBM Plex Sans',sans-serif;}
+[data-testid="stMetricValue"]{color:var(--gft-text);font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
+[data-testid="stMetricDelta"]{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
+[data-testid="stDataFrame"],[data-testid="stTable"]{border:1px solid rgba(148,163,184,.18);border-radius:var(--gft-radius);background:rgba(14,17,23,.36);overflow:hidden;}
+[data-testid="stDataFrame"] button{color:var(--gft-muted);}
+[data-testid="stDataFrame"] button:hover{color:var(--gft-accent);}
+"""
+st.markdown(
+    f"<style>{' '.join(GLOBAL_STREAMLIT_CHROME_CSS.split())}</style>",
     unsafe_allow_html=True,
 )
 
@@ -3975,11 +4025,6 @@ def market_analysis_page():
                         if implied_price > 0 and current_price and current_price > 0:
                             delta = (implied_price - current_price) / current_price
                             delta_color = "normal" if delta >= 0 else "inverse"
-                            st.markdown("""
-                                <style>
-                                [data-testid="stMetricValue"] { font-family: 'Monaco', monospace; font-size: 42px !important; }
-                                </style>
-                            """, unsafe_allow_html=True)
                             st.metric("DCF Implied Price", f"${implied_price:.2f}", f"{delta*100:+.1f}% vs Current (${current_price:.2f})", delta_color=delta_color)
                         elif enterprise_value > 0 or enterprise_value < 0:
                             st.metric("Implied Enterprise Value", f"${enterprise_value:,.0f}", None)

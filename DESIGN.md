@@ -44,7 +44,7 @@
 | Execution stack | `#A5B4FC` | Execution band accent only (`--gft-exec-accent`) |
 | Positive | `#4ADE80` | Up moves, gains |
 | Negative | `#F87171` | Down moves, losses |
-| Streamlit primary | `#1F77B4` | Default Streamlit widgets (`primaryColor`) … keep unless deliberately retheming the whole app to amber |
+| Streamlit primary | `#E8A838` | Native Streamlit chrome (`primaryColor`) after the 2026-04-23 terminal chrome retheme |
 
 - **Semantic:** Success / warning / error in custom panels should align with existing `.gft-dash-msg-*` and alert patterns in `app/main.py` (greens, ambers, reds as already defined).
 - **Dark mode:** Primary. Streamlit theme is dark-first.
@@ -79,6 +79,7 @@
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-03-31 | Initial DESIGN.md from /design-consultation | Codifies existing Sora + Plex + amber terminal direction; adds JetBrains Mono target for tabular data |
-| 2026-03-31 | Keep Streamlit `primaryColor` blue | Avoid full widget retheme until intentional; amber owns branded sections |
+| 2026-03-31 | Initially kept Streamlit `primaryColor` blue | Avoided accidental widget retheme until a deliberate global chrome pass existed |
 | 2026-04-02 | Research · factors attribution strip | Horizontal bars for factor contribution + residual; presets 21/63 TD + MTD + custom; same research band classes; no mockups (plan-design-review, tool off) |
 | 2026-04-19 | Market Analysis · Tabbed Terminal | Formally adopt high-density tabbed workspaces for data-heavy pages instead of vertical document scrolls. Context stays locked in global headers. |
+| 2026-04-23 | Native Streamlit chrome amber retheme | The retheme is now intentional: amber owns active orientation, focus rings, and true primary actions; slate carries default controls. |
