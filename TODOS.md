@@ -39,6 +39,17 @@ From `docs/plans/morning-stack-approach-b.md` (Approach B implementation + CEO/d
 - **Macro calendar** (scheduled events) vs post-hoc headline tags only.
 - **LLM kill/continue doc:** one-page decision on when to add model-based classification (cost, latency, offline).
 
+## Macro Dashboard v2 / autoplan deferrals (2026-04-24)
+
+**Shipped in v0.1.9.0:** FRED-backed Macro Dashboard page, `MACRO_DASHBOARD_METRICS` + band rules, Sahm from UNRATE, sector SPDR table + pair ratio, targeted refresh + on-disk cache UX, tests in `tests/test_macro_*.py`.
+
+From `docs/plans/PLAN-macro-dashboard-v2.md` (after `/autoplan` on main):
+
+- **Consensus / economist surprise** feeds, **global** EM/FX stack beyond the US FRED + Yahoo stack.
+- **Macro calendar** strip (even manual week-ahead) and **state-change alerts** when 2+ bands flip.
+- **Deeper Koyfin-class** edge (z-score / regime modes) once P0 **bands + registry + methodology** are shipped.
+- **Narrowing `st.cache_data.clear()`** on Macro refresh: global clear is a known footgun; fix or keep documented.
+
 ## QA follow-ups (2026-04-01)
 
 - **Medium — console:** Streamlit 1.55 may still log empty `theme.sidebar` widget/skeleton colors in some setups. Tracked in local QA report under `.gstack/` (gitignored). No reliable `config.toml` fix found yet.

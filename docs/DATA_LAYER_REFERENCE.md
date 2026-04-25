@@ -34,6 +34,20 @@ movers_df, rates_df = macro_context_to_dataframes(ctx)
 
 ---
 
+## Macro Dashboard (FRED + sector SPDRs)
+
+**Modules:** `macro_data.fetch_macro_indicator` (FRED and derived series), `macro_indicators` (display list, `RULE_SET_VERSION` band heuristics, `evaluate_macro_metric`, `compute_sahm_series` from `UNRATE`), `macro_sector` (S&P sector SPDR returns vs **SPY** and pair ratio chart via yfinance).
+
+| Data | Source | Cache | Notes |
+|------|--------|--------|--------|
+| Economic series (GDP, CPI, NFCI, T10YIE, etc.) | FRED via `openbb_adapter.fetch_macro_data_openbb` (or pandas_datareader) | L2 file `.macro_cache/{metric}.json` (24h mtime) + `_cached_fetch_macro_indicator` in `main` | **Sahm** is derived: same fetch path loads `unemployment` then `compute_sahm_series` |
+| **Refresh** on Macro | — | `clear_macro_file_cache()` + clears `_cached_fetch_macro_indicator` and `_cached_spdr_momentum` (does not clear the whole `st.cache_data` store) | So FRED files are invalidated on button |
+| Sector table / pair | yfinance `Ticker.history` | `_cached_spdr_momentum` TTL 900s | Whitelist: `SECTOR_BENCHMARK_CHOICES` in `macro_sector` |
+
+R/Y/G pills are **heuristic** (see `RULE_SET_VERSION`); FRED **as-of** is the last index date in each series.
+
+---
+
 ## `portfolio_insights.build_portfolio_insights`
 
 **Purpose:** PORT-lite — sector/industry weights, concentration, value-weighted β vs SPY.

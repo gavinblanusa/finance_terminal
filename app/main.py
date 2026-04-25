@@ -67,8 +67,16 @@ from thirteenf_service import (
     get_holders_by_cusip,
     get_overlap_holdings,
 )
-from macro_data import fetch_macro_indicator
+from macro_data import clear_macro_file_cache, fetch_macro_indicator, macro_file_cache_status
+from macro_charts import PLOTLY_MACRO_CONFIG, build_macro_line_figure
 from macro_context import build_macro_context, macro_context_to_dataframes
+from macro_indicators import (
+    MACRO_DASHBOARD_METRICS,
+    RULE_SET_VERSION,
+    evaluate_macro_metric,
+    status_pill_html,
+)
+from macro_sector import SECTOR_BENCHMARK_CHOICES, build_pair_ratio_frame, build_spdr_momentum_table
 from portfolio_insights import build_portfolio_insights
 import yfinance as yf
 
@@ -318,6 +326,14 @@ def _cached_get_overlap_holdings(cik_list: tuple, year: int, quarter: int):
 @st.cache_data(ttl=86400, show_spinner="Loading macro indicator…")
 def _cached_fetch_macro_indicator(metric: str):
     return fetch_macro_indicator(metric)
+
+
+@st.cache_data(ttl=900, show_spinner="Loading sector SPDR data…")
+def _cached_spdr_momentum() -> tuple:
+    d, e = build_spdr_momentum_table()
+    if d is None or (hasattr(d, "empty") and d.empty):
+        return (pd.DataFrame(), e)
+    return (d, e)
 
 
 # Page configuration
@@ -5961,284 +5977,216 @@ def thirteenf_page():
 
 
 def diagnose_macro_health(df, metric_id):
-    """
-    Diagnose the health of a macroeconomic indicator based on the latest data.
-    Returns:
-        status (str): "Healthy", "Teetering", "Unhealthy", or "No Data"
-        value_str (str): Formatted string of the current value (e.g., "+3.4% YoY" or "4.1%")
-    """
-    if df is None or df.empty:
-        return "No Data", "N/A"
-
-    try:
-        latest_val = df["value"].iloc[-1]
-
-        def get_yoy():
-            if len(df) < 5:
-                return None
-            one_yr_ago = df.index[-1] - pd.DateOffset(years=1)
-            closest_idx = df.index.get_indexer([one_yr_ago], method="nearest")[0]
-            old_val = df["value"].iloc[closest_idx]
-            if old_val == 0:
-                return None
-            return ((latest_val - old_val) / old_val) * 100
-
-        if metric_id == "gdp":
-            yoy = get_yoy()
-            if yoy is None:
-                return "No Data", "N/A"
-            val_str = f"{yoy:+.1f}% YoY"
-            if yoy >= 3.0:
-                return "Healthy", val_str
-            if yoy >= 1.0:
-                return "Teetering", val_str
-            return "Unhealthy", val_str
-
-        if metric_id == "cpi":
-            yoy = get_yoy()
-            if yoy is None:
-                return "No Data", "N/A"
-            val_str = f"{yoy:+.1f}% YoY"
-            if yoy <= 2.5:
-                return "Healthy", val_str
-            if yoy <= 3.5:
-                return "Teetering", val_str
-            return "Unhealthy", val_str
-
-        if metric_id == "unemployment":
-            val_str = f"{latest_val:.1f}%"
-            if latest_val <= 4.0:
-                return "Healthy", val_str
-            if latest_val <= 4.5:
-                return "Teetering", val_str
-            return "Unhealthy", val_str
-
-        if metric_id == "treasury_10y":
-            val_str = f"{latest_val:.2f}%"
-            if 2.0 <= latest_val <= 4.0:
-                return "Healthy", val_str
-            if (4.1 <= latest_val <= 5.0) or (1.5 <= latest_val < 2.0):
-                return "Teetering", val_str
-            return "Unhealthy", val_str
-
-        if metric_id == "m2":
-            yoy = get_yoy()
-            if yoy is None:
-                return "No Data", "N/A"
-            val_str = f"{yoy:+.1f}% YoY"
-            if yoy >= 2.0:
-                return "Healthy", val_str
-            if yoy >= 0.0:
-                return "Teetering", val_str
-            return "Unhealthy", val_str
-
-        if metric_id == "pmi":
-            val_str = f"{latest_val:.1f}"
-            if latest_val >= 50.0:
-                return "Healthy", val_str
-            if latest_val >= 45.0:
-                return "Teetering", val_str
-            return "Unhealthy", val_str
-
-        if metric_id == "retail_sales":
-            yoy = get_yoy()
-            if yoy is None:
-                return "No Data", "N/A"
-            val_str = f"{yoy:+.1f}% YoY"
-            if yoy >= 3.0:
-                return "Healthy", val_str
-            if yoy >= 1.0:
-                return "Teetering", val_str
-            return "Unhealthy", val_str
-
-        if metric_id == "consumer_sentiment":
-            val_str = f"{latest_val:.1f}"
-            if latest_val >= 70.0:
-                return "Healthy", val_str
-            if latest_val >= 60.0:
-                return "Teetering", val_str
-            return "Unhealthy", val_str
-
-        return "No Data", "N/A"
-    except Exception as e:
-        print(f"Error diagnosing macro health for {metric_id}: {e}")
-        return "No Data", "N/A"
+    """Back-compat: delegates to :func:`macro_indicators.evaluate_macro_metric`."""
+    status, value_str, _lbl, _asof = evaluate_macro_metric(df, metric_id)
+    return status, value_str
 
 def macro_dashboard_page():
-    """Display the Macro Dashboard page."""
+    """Display the Macro Dashboard page: FRED + derived + sector SPDR sleeve."""
+    from datetime import datetime
+
     import plotly.express as px
 
     st.title("Macro Dashboard")
     st.markdown("---")
-    
-    col_refresh, col_spacer = st.columns([1, 5])
-    with col_refresh:
-        if st.button("Refresh macro data"):
-            st.cache_data.clear()
+
+    c_btn, c_lru = st.columns([1, 2])
+    with c_btn:
+        if st.button(
+            "Refresh macro data",
+            type="primary",
+            use_container_width=True,
+            key="gft_macro_refresh",
+        ):
+            clear_macro_file_cache()
+            _cached_fetch_macro_indicator.clear()
+            _cached_spdr_momentum.clear()
+            st.session_state["macro_refreshed_at"] = datetime.now().astimezone().strftime(
+                "%Y-%m-%d %H:%M %Z"
+            )
             st.rerun()
-            
-    st.markdown("A tracking dashboard for the most important macroeconomic indicators utilized by macro funds to assess liquidity, economic capacity, and the business cycle.")
-    
-    # Define metrics
-    metrics = [
-        {
-            "id": "gdp",
-            "title": "Nominal GDP (Billions)",
-            "primer": "Gross Domestic Product (GDP) measures the total value of goods produced. It is the broadest measure of economic activity. Two consecutive quarters of decline signal a technical recession.",
-            "color": "#1f77b4"
-        },
-        {
-            "id": "cpi",
-            "title": "Consumer Price Index (CPI)",
-            "primer": "CPI tracks inflation across a basket of goods. The Federal Reserve targets ~2% YoY. High inflation often leads to higher interest rates, which cools the market and shrinks valuations.",
-            "color": "#ff7f0e"
-        },
-        {
-            "id": "unemployment",
-            "title": "Unemployment Rate (%)",
-            "primer": "Rising unemployment signals an economic slowdown. **The Sahm Rule** suggests a recession is near if the 3-month average rises 0.5% above its 12-month low.",
-            "color": "#d62728"
-        },
-        {
-            "id": "treasury_10y",
-            "title": "10-Year Treasury Yield (%)",
-            "primer": "The 10-Year Yield is the benchmark for global borrowing costs. Watch the **Yield Curve**: if short-term yields (e.g., 2-Year) exceed the 10-Year, this 'inversion' is a historically reliable recession indicator.",
-            "color": "#2ca02c"
-        },
-        {
-            "id": "m2",
-            "title": "M2 Money Supply (Billions)",
-            "primer": "M2 measures the total money in circulation and bank accounts. Expanding M2 boosts liquidity and asset prices. A contracting M2 signals a liquidity crunch and potential deleveraging.",
-            "color": "#9467bd"
-        },
-        {
-            "id": "pmi",
-            "title": "Purchasing Managers' Index (PMI)",
-            "primer": "A leading indicator of economic health derived from manufacturing/service sector surveys. A reading **above 50** indicates expansion; **below 50** indicates contraction.",
-            "color": "#8c564b"
-        },
-        {
-            "id": "retail_sales",
-            "title": "Total Retail Sales (Millions)",
-            "primer": "A real-time barometer of consumer spending momentum. Crucial for understanding if consumer demand is keeping up with economic capacity.",
-            "color": "#e377c2"
-        },
-        {
-            "id": "consumer_sentiment",
-            "title": "Consumer Sentiment (U. Michigan)",
-            "primer": "Measures how optimistic consumers feel about their finances and the economy. Since consumer spending is ~70% of US GDP, this sentiment drives future spending.",
-            "color": "#7f7f7f"
-        }
-    ]
-    
+    with c_lru:
+        lru = st.session_state.get("macro_refreshed_at")
+        if lru:
+            st.caption(f"Last **Refresh** click: {lru}")
+    m_ids = [m.id for m in MACRO_DASHBOARD_METRICS]
+
+    with st.expander("Methodology and limits (read this once)", expanded=False):
+        st.markdown(
+            f"""
+**What this is:** A US-oriented scan using **FRED** (when the network allows) and **Yahoo** for sector ETFs.  
+**Rule set version:** `{RULE_SET_VERSION}` (fixed bands, not a forecast; tune in code when regimes change).  
+**R/Y/G pills:** *OK* / *Watch* / *Stress* are heuristics for skimming, **not** trading advice.  
+**Revisions:** FRED series are revised; “last point” is the last observation in the chart.  
+**Sahm** is computed locally from the unemployment (UNRATE) series.  
+**S&P sector SPDRs (XL*):** price return over the window, delayed; **not** a fundamental sector model.
+        """
+        )
+
+    st.caption("Live cross-asset **σ**-normalized moves and the Treasury **curve** are on the **Dashboard** page (Morning strip).")
     st.markdown("---")
-    
-    # Pre-fetch data and calculate statuses
-    metrics_data = {}
+
+    # Pre-fetch
+    metrics_data: Dict[str, Any] = {}
     health_counts = {"Healthy": 0, "Teetering": 0, "Unhealthy": 0}
-    
-    for m in metrics:
-        df = _cached_fetch_macro_indicator(m["id"])
-        status, val_str = diagnose_macro_health(df, m["id"])
-        metrics_data[m["id"]] = {
+
+    for m in MACRO_DASHBOARD_METRICS:
+        mid = m.id
+        df = _cached_fetch_macro_indicator(mid)
+        st_l, val_str, plab, as_of = evaluate_macro_metric(df, mid)
+        metrics_data[mid] = {
             "df": df,
-            "status": status,
+            "status": st_l,
             "val_str": val_str,
+            "pill": plab,
+            "as_of": as_of,
+            "spec": m,
         }
-        if status in health_counts:
-            health_counts[status] += 1
-            
+        if st_l in health_counts:
+            health_counts[st_l] += 1
+
+    newest, n_present, n_missing = macro_file_cache_status(m_ids)
+    if n_present == 0 and newest is None:
+        st.caption("FRED on-disk cache: **empty** (`.macro_cache/`, 24h TTL on fetch).")
+    elif newest is not None:
+        age_sec = (datetime.now() - newest).total_seconds()
+        if age_sec < 3600:
+            age = f"{max(0, int(age_sec // 60))}m"
+        elif age_sec < 86400:
+            age = f"{age_sec / 3600.0:.1f}h"
+        else:
+            age = f"{age_sec / 86400.0:.1f}d"
+        st.caption(
+            f"FRED on-disk: **{n_present}/{len(m_ids)}** series, newest file **{age}** old"
+        )
+    else:
+        st.caption(
+            f"FRED on-disk: **{n_present}/{len(m_ids)}** series; **{n_missing}** not yet written to disk"
+        )
+
     total_valid = sum(health_counts.values())
-    
-    # Render Thermometer
+
     if total_valid > 0:
-        st.subheader("Economic temperature")
-        st.markdown("An aggregate diagnosis of the macroeconomic metrics below to determine the broad health of the business cycle.")
-        
-        # Calculate percentages for the thermometer segments
-        p_healthy = (health_counts['Healthy'] / total_valid) * 100
-        p_teetering = (health_counts['Teetering'] / total_valid) * 100
-        p_unhealthy = (health_counts['Unhealthy'] / total_valid) * 100
-        
-        # Custom HTML Thermometer Bar
-        st.markdown(f"""
-        <div style="width: 100%; display: flex; height: 35px; border-radius: 17px; overflow: hidden; margin-bottom: 15px; background-color: #333;">
-            <div style="width: {p_healthy}%; background-color: #2ca02c; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; font-weight: bold;">
-                {health_counts['Healthy'] if health_counts['Healthy'] > 0 else ''}
-            </div>
-            <div style="width: {p_teetering}%; background-color: #ffc107; display: flex; align-items: center; justify-content: center; color: black; font-size: 16px; font-weight: bold;">
-                {health_counts['Teetering'] if health_counts['Teetering'] > 0 else ''}
-            </div>
-            <div style="width: {p_unhealthy}%; background-color: #d62728; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; font-weight: bold;">
-                {health_counts['Unhealthy'] if health_counts['Unhealthy'] > 0 else ''}
-            </div>
+        st.subheader("Economic temperature (aggregate)")
+        st.caption("Share of **OK** / **Watch** / **Stress** over all metrics below (missing series are not counted in bands).")
+        st.caption(
+            f"**{health_counts['Healthy']}** OK  ·  **{health_counts['Teetering']}** Watch  ·  **{health_counts['Unhealthy']}** Stress"
+        )
+        p_h = (health_counts["Healthy"] / total_valid) * 100
+        p_t = (health_counts["Teetering"] / total_valid) * 100
+        p_u = (health_counts["Unhealthy"] / total_valid) * 100
+        st.markdown(
+            f"""
+        <div style="width:100%;display:flex;height:36px;border-radius:6px;overflow:hidden;margin-bottom:8px;
+        border:1px solid #3f3f4a">
+            <div style="width:{p_h}%;min-width:0;background:#14532D;color:#4ADE80;
+            display:flex;align-items:center;justify-content:center;
+            font-family:IBM Plex Sans,sans-serif;font-weight:600;">{health_counts['Healthy'] or ""}</div>
+            <div style="width:{p_t}%;min-width:0;background:#422006;color:#E8A838;
+            display:flex;align-items:center;justify-content:center;
+            font-weight:600;">{health_counts['Teetering'] or ""}</div>
+            <div style="width:{p_u}%;min-width:0;background:#450A0A;color:#F87171;
+            display:flex;align-items:center;justify-content:center;
+            font-weight:600;">{health_counts['Unhealthy'] or ""}</div>
         </div>
-        """, unsafe_allow_html=True)
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(f"**Healthy:** {health_counts['Healthy']}")
-        with col2:
-            st.markdown(f"**Teetering:** {health_counts['Teetering']}")
-        with col3:
-            st.markdown(f"**Unhealthy:** {health_counts['Unhealthy']}")
-            
+        """,
+            unsafe_allow_html=True,
+        )
         st.markdown("---")
-    
-    # Render charts in a 2-column layout
-    for i in range(0, len(metrics), 2):
-        col1, col2 = st.columns(2)
-        
-        # Left column
-        metric1 = metrics[i]
-        md1 = metrics_data[metric1["id"]]
-        with col1:
-            st.subheader(f"{metric1['title']} — {md1['val_str']} · {md1['status']}")
-            df1 = md1["df"]
-            if df1 is not None and not df1.empty:
-                fig1 = px.line(df1, y="value", title="")
-                fig1.update_traces(line_color=metric1["color"])
-                fig1.update_layout(
-                    xaxis_title="Date",
-                    yaxis_title="Value",
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    font_color='white',
-                    margin=dict(l=0, r=0, t=10, b=0)
+
+    mlist = list(MACRO_DASHBOARD_METRICS)
+    for i in range(0, len(mlist), 2):
+        cleft, cright = st.columns(2)
+
+        for j, col in enumerate((cleft, cright)):
+            if i + j >= len(mlist):
+                break
+            spec = mlist[i + j]
+            mid = spec.id
+            md = metrics_data[mid]
+            with col:
+                pill = status_pill_html(md["status"], md["pill"])
+                st.markdown(
+                    f'<p class="gft-tabular" style="font-size:1.05rem;margin:0 0 2px 0;line-height:1.3;">'
+                    f"{html.escape(spec.title)}  {pill}</p>"
+                    f'<p class="gft-tabular" style="font-size:0.95rem;margin:0 0 4px 0;color:#E2E8F0;">'
+                    f"{html.escape(md['val_str'])}</p>",
+                    unsafe_allow_html=True,
                 )
-                st.plotly_chart(fig1, use_container_width=True)
-            else:
-                st.info(f"Data not available for {metric1['title']}")
-                
-            with st.expander("How to read this & tipping points"):
-                st.write(metric1["primer"])
-                
-        # Right column
-        if i + 1 < len(metrics):
-            metric2 = metrics[i+1]
-            md2 = metrics_data[metric2["id"]]
-            with col2:
-                st.subheader(f"{metric2['title']} — {md2['val_str']} · {md2['status']}")
-                df2 = md2["df"]
-                if df2 is not None and not df2.empty:
-                    fig2 = px.line(df2, y="value", title="")
-                    fig2.update_traces(line_color=metric2["color"])
-                    fig2.update_layout(
-                        xaxis_title="Date",
-                        yaxis_title="Value",
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        font_color='white',
-                        margin=dict(l=0, r=0, t=10, b=0)
-                    )
-                    st.plotly_chart(fig2, use_container_width=True)
+                if md.get("as_of"):
+                    st.caption(f"FRED as-of: {md['as_of']}")
+                df1 = md["df"]
+                if spec.y_log and df1 is not None and not df1.empty:
+                    st.caption("Log y-axis so recent years stay readable after a one-off shock in history.")
+                if df1 is not None and not df1.empty:
+                    fig1 = build_macro_line_figure(df1, spec)
+                    st.plotly_chart(fig1, use_container_width=True, config=PLOTLY_MACRO_CONFIG)
                 else:
-                    st.info(f"Data not available for {metric2['title']}")
-                    
-                with st.expander("How to read this & tipping points"):
-                    st.write(metric2["primer"])
-        
-        st.markdown("<br>", unsafe_allow_html=True)
+                    if spec.empty_detail:
+                        with st.expander("Why this metric is missing", expanded=False):
+                            st.markdown(spec.empty_detail)
+                    else:
+                        st.info("Data not available (check FRED or network).")
+                with st.expander("What this is"):
+                    st.write(spec.primer)
+
+    st.subheader("Sector rotation (S&P 500 sector SPDRs)")
+    st.caption("Price return vs **SPY**; Yahoo quotes may be **delayed**. Ranks on **1m** relative to SPY.")
+    s_df, s_err = _cached_spdr_momentum()
+    if s_err:
+        st.warning(s_err)
+    if s_df is not None and not s_df.empty:
+        s_show = s_df.copy()
+        for c in ("1d %", "5d %", "1m %", "rel 1m vs SPY (pp)"):
+            if c in s_show.columns:
+                s_show[c] = pd.to_numeric(s_show[c], errors="coerce").round(2)
+        st.dataframe(
+            _gft_tabular_styler(s_show),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Rank": st.column_config.NumberColumn(format="%d"),
+                "1d %": st.column_config.NumberColumn("1d %", format="%.2f"),
+                "5d %": st.column_config.NumberColumn("5d %", format="%.2f"),
+                "1m %": st.column_config.NumberColumn("1m %", format="%.2f"),
+                "rel 1m vs SPY (pp)": st.column_config.NumberColumn("rel 1m vs SPY (pp)", format="%.2f"),
+            },
+        )
+    else:
+        st.info("No sector table yet.")
+
+    st.subheader("Pair ratio (rebased 3m)")
+    st.caption("Ratio of two **close** price series, rebased to 1.0 at the first aligned date. Try **XLF** / **XLK** or **XLE** / **SPY**.")
+
+    pc1, pc2 = st.columns(2)
+    with pc1:
+        a_sym = st.selectbox(
+            "Symbol A (numerator)",
+            SECTOR_BENCHMARK_CHOICES,
+            index=SECTOR_BENCHMARK_CHOICES.index("XLF") if "XLF" in SECTOR_BENCHMARK_CHOICES else 0,
+            key="macro_pair_a",
+        )
+    with pc2:
+        b_sym = st.selectbox(
+            "Symbol B (denominator)",
+            SECTOR_BENCHMARK_CHOICES,
+            index=SECTOR_BENCHMARK_CHOICES.index("XLK") if "XLK" in SECTOR_BENCHMARK_CHOICES else 0,
+            key="macro_pair_b",
+        )
+    pr, perr = build_pair_ratio_frame(a_sym, b_sym)
+    if perr:
+        st.caption(perr)
+    if pr is not None and not pr.empty:
+        figp = px.line(pr, y=pr.columns[0], title="")
+        figp.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font_color="white",
+            margin=dict(l=0, r=0, t=10, b=0),
+        )
+        st.plotly_chart(figp, use_container_width=True, config=PLOTLY_MACRO_CONFIG)
+    else:
+        st.caption("Could not build ratio (pick two distinct symbols from the list).")
 
 
 def main():
