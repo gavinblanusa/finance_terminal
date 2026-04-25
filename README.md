@@ -1,6 +1,6 @@
 # Gavin Financial Terminal
 
-A personal financial intelligence platform modeled after Bloomberg/TradingView, built with Streamlit and PostgreSQL. The app has six main areas: **Dashboard** (portfolio + tax summary), **Portfolio & Taxes** (trades, lots, HIFO), **Market Analysis** (charts, valuation, TradingView-style signals), **IPO Vintage Tracker** (calendar + post-IPO performance), **Partnerships** (SEC 8-K partnership events), and **13F Institutional Holdings** (quarterly 13F filings, compare quarters, by-CUSIP, overlap).
+A personal financial intelligence platform modeled after Bloomberg/TradingView, built with Streamlit and PostgreSQL. The app has **seven** main areas: **Dashboard** (portfolio + tax summary), **Portfolio & Taxes** (trades, lots, HIFO), **Market Analysis** (charts, valuation, TradingView-style signals), **Macro Dashboard** (US FRED indicators, Sahm rule, sector SPDRs vs SPY, pair ratio), **IPO Vintage Tracker** (calendar + post-IPO performance), **Partnerships** (SEC 8-K partnership events), and **13F Institutional Holdings** (quarterly 13F filings, compare quarters, by-CUSIP, overlap).
 
 ## Setup Instructions
 
@@ -65,7 +65,7 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/db.py` | PostgreSQL connection and session management |
 | `app/tax_engine.py` | HIFO tax lot tracking, gain calculations, CSV import |
 | `app/macro_context.py` | Dashboard macro strip: cross-asset movers (yfinance), optional FRED rates |
-| `app/macro_data.py` / `macro_indicators.py` / `macro_sector.py` | Macro **Dashboard** page: FRED series (file cache + bands), derived **Sahm** from UNRATE, S&P **sector SPDRs** vs **SPY** and pair ratio chart |
+| `app/macro_data.py` / `macro_indicators.py` / `macro_sector.py` / `macro_charts.py` | Macro **Dashboard** page: FRED series (file cache + bands), derived **Sahm** from UNRATE, S&P **sector SPDRs** vs **SPY**, pair ratio chart, Plotly time-range + log-y helpers |
 | `app/portfolio_insights.py` | Dashboard PORT-lite: sector weights, concentration, value-weighted beta vs SPY |
 | `app/factor_exposure.py` | Dashboard Fama–French 5-factor loadings + cumulative attribution strip (estimation vs attribution windows, residual) |
 | `app/tca_estimate.py` | Dashboard pre-trade impact estimate (ADV, participation, illustrative square-root heuristic) |
@@ -139,6 +139,12 @@ The tax engine uses **Highest-In-First-Out (HIFO)** methodology:
 - This minimizes taxable gains for tax optimization
 - Tracks individual tax lots from each purchase
 
+### Macro Dashboard
+- **FRED + Yahoo context:** R/Y/G health pills, economic temperature bar, per-metric line charts (10Y default view, 1Y–All range control, log y for spike-heavy series such as initial claims and M2), FRED as-of under each read
+- **Sahm rule:** Derived locally from the unemployment (**UNRATE**) series
+- **Sector sleeve:** S&P 500 **sector SPDRs** vs **SPY** (delayed Yahoo quotes), 1d / 5d / 1m and relative 1m; optional **pair ratio** chart (rebased, e.g. XLF / XLK)
+- **Refresh macro data:** Clears on-disk **`.macro_cache/`** and reloads; shows last click time and cache file freshness
+
 ### Market Analysis
 - **Options · ATM IV term structure** (BVOL/OVME-lite): implied vol at strike nearest spot across listed expiries (Yahoo Finance chains); line chart vs days to expiry and expandable table—not a dealer vol surface
 - **Options · Black–Scholes**: European call/put **theory** prices from spot/strike/DTE/IV; risk-free default from ^TNX (cached); optional preset rows from the IV table above (`scipy`)
@@ -176,8 +182,8 @@ This section gives future AIs and refactors enough context to navigate the codeb
 ### Entry points and routing
 
 - **App entry**: From project root, `streamlit run app/main.py` → `app/main.py` → `main()` → sidebar `st.sidebar.radio` chooses page.
-- **Pages** (all in `app/main.py`): `dashboard_page()`, `portfolio_taxes_page()`, `market_analysis_page()`, `ipo_tracker_page()`, `partnerships_page()`, `thirteenf_page()`. Sidebar order: Dashboard, Portfolio & Taxes, Market Analysis, IPO Vintage Tracker, Partnerships, 13F Holdings.
-- **Module usage**: Dashboard/Portfolio use `db`, `models`, `tax_engine`. Market Analysis uses `market_data` (which can use `financetoolkit_adapter`, `openbb_adapter`, and `api_clients` for OHLCV and fundamentals). IPO uses `ipo_service`. Partnerships uses `edgar_service`, `partnerships_config`, `partnership_signal`, and `partnership_enrichment`. 13F uses `thirteenf_service` and `thirteenf_config`. All app code lives under `app/`; caches (`.market_cache/`, `.ipo_cache/`, `.edgar_cache/`) and `.env` stay at project root.
+- **Pages** (all in `app/main.py`): `dashboard_page()`, `portfolio_taxes_page()`, `market_analysis_page()`, `macro_dashboard_page()`, `ipo_tracker_page()`, `partnerships_page()`, `thirteenf_page()`. Sidebar order: Dashboard, Portfolio & Taxes, Market Analysis, Macro Dashboard, IPO Vintage Tracker, Partnerships, 13F Holdings.
+- **Module usage**: Dashboard/Portfolio use `db`, `models`, `tax_engine`. Market Analysis uses `market_data` (which can use `financetoolkit_adapter`, `openbb_adapter`, and `api_clients` for OHLCV and fundamentals). **Macro Dashboard** uses `macro_data`, `macro_indicators`, `macro_sector`, `macro_charts`, and `openbb_adapter` (FRED file cache under `.macro_cache/`). IPO uses `ipo_service`. Partnerships uses `edgar_service`, `partnerships_config`, `partnership_signal`, and `partnership_enrichment`. 13F uses `thirteenf_service` and `thirteenf_config`. All app code lives under `app/`; caches (`.market_cache/`, `.macro_cache/`, `.ipo_cache/`, `.edgar_cache/`) and `.env` stay at project root.
 
 ### Where key logic lives
 
@@ -185,6 +191,7 @@ This section gives future AIs and refactors enough context to navigate the codeb
 |--------|-------------------|--------|
 | Portfolio aggregation, tax summary | `tax_engine.py` (`TaxEngine`, `get_portfolio_summary`) | Reads `Trades` from DB via session passed in |
 | Dashboard macro strip, PORT-lite, ranked news | `macro_context.py`, `portfolio_insights.py`, `relevant_news.py`, `main.py` (`_cached_*`) | Movers: yfinance; rates: FRED if key set; sectors/profiles: `get_company_profile`; beta: `fetch_ohlcv` + SPY; news: `fetch_company_news` per ticker |
+| Macro **Dashboard** page (FRED + Sahm + sectors) | `macro_data.py`, `macro_indicators.py`, `macro_sector.py`, `macro_charts.py`, `openbb_adapter.py` | On-disk **`.macro_cache/`**; Streamlit `st.cache_data` for series fetch and sector momentum table |
 | Trade CRUD, lots, CSV import | `main.py` (portfolio_taxes_page) + `tax_engine.py` (HIFO, `import_trades_from_csv`) | Trades stored in `models.Trades` |
 | OHLCV fetch, cache, indicators | `market_data.py` (`fetch_ohlcv`, …), `market_warehouse.py` (optional), `openbb_adapter.py` | JSON cache `.market_cache/`; optional MDW Parquet/DuckDB if env set; then OpenBB, yfinance, `api_clients` |
 | Valuation (P/E, revenue) | `market_data.py` (`fetch_valuation_data`, …) | DB table `valuation_history`; also Alpha Vantage / Finnhub / FMP |

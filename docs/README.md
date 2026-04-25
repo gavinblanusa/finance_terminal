@@ -5,7 +5,7 @@ This folder holds implementation notes and architecture docs left for **future A
 | Document | When to use it |
 |----------|-----------------|
 | **../DESIGN.md** (repo root) | You’re changing Streamlit UI: fonts, tokens, `.gft-*` classes, or layout. |
-| **ARCHITECTURE.md** | You need data flow, page→module mapping, or a quick “how does X get its data?” before refactoring or adding features. |
+| **ARCHITECTURE.md** | You need data flow, page→module mapping, or a quick “how does X get its data?” before refactoring or adding features. Includes the **Macro Dashboard** row (FRED `.macro_cache/`, `macro_dashboard_page()`). |
 | **DATA_LAYER_REFERENCE.md** | You need dashboard data contracts, optional **FastAPI** paths (`terminal_api`), sources, caches, failures, Pydantic export paths, or **Partnerships** EDGAR/Yahoo cache behavior. |
 | **OPENBB_COVERAGE.md** | You need which datasets use OpenBB, provider try-order, env toggles (`USE_OPENBB`, timeouts), or how CI keeps this file aligned with `openbb_provider_registry.py`. |
 | **PROJECT_LEARNINGS.md** | You want the gstack **`/learn`** snapshot: patterns, pitfalls, and architecture notes from cross-session logs (live source under `~/.gstack/projects/<slug>/`; see **AGENTS.md** for `scripts/gstack-learnings.sh`). |
