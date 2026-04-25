@@ -39,7 +39,22 @@ _MACRO_FRED_SERIES_IDS: Dict[str, str] = {
     "pmi": "M0204AM356PCEN",
     "retail_sales": "RSAFS",
     "consumer_sentiment": "UMCSENT",
+    "nfci": "NFCI",
+    "t10yie": "T10YIE",
+    "dfii10": "DFII10",
+    "init_claims": "IC4WSA",
 }
+
+# Forward-fill to latest observation (daily / weekly FRED; gaps on holidays).
+_FRED_MACRO_FFILL: frozenset[str] = frozenset(
+    {
+        "treasury_10y",
+        "nfci",
+        "t10yie",
+        "dfii10",
+        "init_claims",
+    }
+)
 
 
 def _macro_fred_ob_result_to_df(raw: Any, series_id: str) -> Optional["Any"]:
@@ -88,7 +103,7 @@ def _fetch_macro_via_pandas_datareader(metric: str) -> Optional["Any"]:
         df = web.DataReader(sid, "fred", "2000-01-01")
         df = df.rename(columns={sid: "value"})
         df.index.name = "date"
-        if metric == "treasury_10y":
+        if metric in _FRED_MACRO_FFILL or metric == "treasury_10y":
             df = df.ffill()
         return df.dropna()
     except Exception as e:
@@ -545,8 +560,8 @@ def fetch_macro_data_openbb(metric: str) -> Optional["Any"]:
     ``obb.economy.fred_series`` (OpenBB maps ``FRED_API_KEY`` to ``fred_api_key``).
     Otherwise, or on failure, falls back to **pandas_datareader**.
 
-    metric: 'gdp', 'cpi', 'unemployment', 'treasury_10y', 'm2', 'pmi',
-    'retail_sales', 'consumer_sentiment'
+    metric: FRED keys including ``nfci``, ``t10yie``, ``dfii10``, ``init_claims`` (see
+    ``_MACRO_FRED_SERIES_IDS``). ``sahm`` is built in :mod:`macro_data` from ``UNRATE``.
 
     Returns a DataFrame with a datetime index and a 'value' column, or None.
     """
@@ -574,7 +589,7 @@ def fetch_macro_data_openbb(metric: str) -> Optional["Any"]:
             if res.ok and res.data is not None:
                 df = _macro_fred_ob_result_to_df(res.data, series_id)
                 if df is not None and not df.empty:
-                    if metric == "treasury_10y":
+                    if metric in _FRED_MACRO_FFILL or metric == "treasury_10y":
                         df = df.ffill()
                     return df.dropna()
         except Exception as e:

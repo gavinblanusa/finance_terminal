@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
 
+## [0.1.9.0] - 2026-04-25
+
+### Added
+
+- **Macro Dashboard (v2):** A dedicated page for US FRED + Yahoo context: R/Y/G status pills, economic temperature bar, per-metric charts (default 10Y window, x-axis range selector, log y for shock-heavy series), sector SPDR momentum vs **SPY**, and a rebased **pair ratio** (XLF / XLK, etc.). FRED keys in `app/openbb_adapter.py`, band rules in `app/macro_indicators.py` (`RULE_SET_VERSION` in methodology), file cache in `.macro_cache/`.
+- **Sahm rule (derived):** Computed locally from **UNRATE**; displayed with the rest of the registry.
+
+### Changed
+
+- **Refresh macro data:** Primary button, per-session “last click” time, and on-disk cache line (file count, newest `mtime`); clears `.macro_cache/` and targeted Streamlit cache keys without `st.cache_data.clear()`.
+- **Sector table:** Rounded % columns, JetBrains + tabular nums via the shared styler. Plotly mode bar set to **hover** on macro charts to reduce visual noise.
+- **ISM (PMI):** When the source is missing, a collapsed “why” expander points at FRED series drift instead of a dead-end info box alone.
+
 ## [0.1.8.0] - 2026-04-19
 
 ### Added

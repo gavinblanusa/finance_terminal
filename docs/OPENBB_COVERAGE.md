@@ -12,7 +12,7 @@ CI runs `python scripts/verify_openbb_coverage_doc.py` so every **multi-provider
 | Equity fundamentals | `fetch_fundamentals_openbb` | `market_data.get_fundamentals_ratios` | ratios: **fmp → intrinio**; income: **fmp → intrinio → polygon → yfinance** | L2 DB `CompanyFundamentals` | DB-backed | Two `run_provider_chain` calls |
 | Company news | `fetch_news_openbb` | `market_data.fetch_company_news`, `thirteenf_agent` | fmp → polygon → yfinance → tiingo → intrinio | None in adapter; callers may cache | — | 14d lookback; Benzinga omitted (often key-gated) |
 | Equity historical (point) | `fetch_historical_price_openbb` | `ipo_service.get_historical_price` | polygon → yfinance → fmp | Via IPO flows / cache | — | Single-day window |
-| Macro series | `fetch_macro_data_openbb` | `macro_data.fetch_macro_indicator` | OpenBB **fred** → pandas_datareader FRED fallback | L2 file `.macro_cache/{metric}.json` | 24h | `economy.fred_series` when `USE_OPENBB` + `FRED_API_KEY` |
+| Macro series | `fetch_macro_data_openbb` | `macro_data.fetch_macro_indicator` | OpenBB **fred** → pandas_datareader FRED; keys include `nfci`, `t10yie`, `dfii10`, `init_claims` (and legacy GDP/CPI/…); `sahm` derived from `unemployment` in `macro_data` | L2 file `.macro_cache/{metric}.json` | 24h | `economy.fred_series` when `USE_OPENBB` + `FRED_API_KEY` |
 
 ## Environment
 

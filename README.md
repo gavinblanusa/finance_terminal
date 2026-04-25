@@ -65,6 +65,7 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/db.py` | PostgreSQL connection and session management |
 | `app/tax_engine.py` | HIFO tax lot tracking, gain calculations, CSV import |
 | `app/macro_context.py` | Dashboard macro strip: cross-asset movers (yfinance), optional FRED rates |
+| `app/macro_data.py` / `macro_indicators.py` / `macro_sector.py` | Macro **Dashboard** page: FRED series (file cache + bands), derived **Sahm** from UNRATE, S&P **sector SPDRs** vs **SPY** and pair ratio chart |
 | `app/portfolio_insights.py` | Dashboard PORT-lite: sector weights, concentration, value-weighted beta vs SPY |
 | `app/factor_exposure.py` | Dashboard Fama–French 5-factor loadings + cumulative attribution strip (estimation vs attribution windows, residual) |
 | `app/tca_estimate.py` | Dashboard pre-trade impact estimate (ADV, participation, illustrative square-root heuristic) |
