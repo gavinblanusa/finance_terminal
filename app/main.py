@@ -3362,6 +3362,9 @@ def market_analysis_page():
     col_search, col_refresh = st.columns([4, 1])
     
     with col_search:
+        query_ticker = st.query_params.get("ticker")
+        if query_ticker and not st.session_state.get("market_analysis_ticker"):
+            st.session_state["market_analysis_ticker"] = str(query_ticker).upper().strip()
         ticker_input = st.text_input(
             "Search ticker",
             placeholder="Enter ticker symbol (e.g., AAPL, GOOGL, MSFT)",
@@ -3423,10 +3426,22 @@ def market_analysis_page():
                     st.markdown('### Current signal')
                     st.markdown(get_signal_badge(summary['signal']), unsafe_allow_html=True)
                 st.markdown("---")
-                # === TABBED LAYOUT ===
-                tab_tech, tab_val, tab_corp = st.tabs(["Technicals", "Valuation", "Corporate Activity"])
+                # Streamlit tabs eagerly execute every section, which makes the
+                # SEC activity view wait behind unrelated valuation calls.
+                section_options = ["Technicals", "Valuation", "Corporate Activity"]
+                section_key = f"market_analysis_section_{ticker_input}"
+                query_section = st.query_params.get("section")
+                if query_section in section_options and section_key not in st.session_state:
+                    st.session_state[section_key] = query_section
+                analysis_section = st.radio(
+                    "Analysis section",
+                    section_options,
+                    horizontal=True,
+                    label_visibility="collapsed",
+                    key=section_key,
+                )
 
-                with tab_tech:
+                if analysis_section == "Technicals":
                     # === DUAL CHART ===
                     st.markdown("### Technical chart")
                 
@@ -3503,12 +3518,6 @@ def market_analysis_page():
                     if len(df) < 200:
                         st.caption("SMA 200 is shown with partial data (fewer than 200 trading days).")
                 
-                    # Insider transactions for chart overlay (optional)
-                    insider_list = []
-                    try:
-                        insider_list = _cached_fetch_insider_transactions(ticker_input)
-                    except Exception:
-                        pass
                     # TradingView Lightweight Charts: candlestick or line + volume + support lines + markers + RSI (zoom + double-click reset)
                     tech_data = df_to_technical_chart_data(df_display, strong_signals_only=strong_signals_only)
                     # Show markers when user wants any signals: all (show_signals) or strong-only (strong_signals_only)
@@ -3717,7 +3726,7 @@ def market_analysis_page():
                                 else:
                                     st.error("Failed to save TradingView signals.")
                 
-                with tab_val:
+                elif analysis_section == "Valuation":
                     # === VALUATION CHART ===
                     st.markdown("---")
                     st.markdown("### Valuation analysis")
@@ -4271,7 +4280,12 @@ def market_analysis_page():
                         with m3:
                             st.caption(f"d1={_bs_out.d1:.3f} · d2={_bs_out.d2:.3f}")
 
-                with tab_corp:
+                elif analysis_section == "Corporate Activity":
+                    insider_list = []
+                    try:
+                        insider_list = _cached_fetch_insider_transactions(ticker_input)
+                    except Exception:
+                        pass
                     # === COMPANY PROFILE (expander) ===
                     try:
                         profile = _cached_get_company_profile(ticker_input)
@@ -4361,13 +4375,13 @@ def market_analysis_page():
                                 continue
                             if min_value and value < min_value:
                                 continue
-                            if value <= 0 and shares > 0 and source != "SEC" and not df_display.empty:
+                            if value <= 0 and shares > 0 and source != "SEC" and not df.empty:
                                 try:
                                     d_obj = d.date() if hasattr(d, "date") else d
                                     ts = pd.Timestamp(d_obj)
-                                    idx = df_display.index.get_indexer([ts], method="nearest")[0]
-                                    if 0 <= idx < len(df_display):
-                                        close = float(df_display.iloc[idx]["Close"])
+                                    idx = df.index.get_indexer([ts], method="nearest")[0]
+                                    if 0 <= idx < len(df):
+                                        close = float(df.iloc[idx]["Close"])
                                         value = int(shares * close)
                                 except Exception:
                                     pass
@@ -4667,11 +4681,19 @@ def market_analysis_page():
         db.close()
         
         if watchlist_items:
-            # Header with refresh button
-            header_col1, header_col2 = st.columns([4, 1])
+            # Header with explicit loading controls. Large watchlists can make
+            # yfinance calls for dozens of symbols, so keep ticker search snappy.
+            header_col1, header_col2, header_col3 = st.columns([3, 1, 1])
             with header_col1:
                 st.markdown("### Watchlist summary")
             with header_col2:
+                if st.button(
+                    "Load summary",
+                    help="Fetch current metrics for every watchlist ticker",
+                    key="load_watchlist_summary",
+                ):
+                    st.session_state["market_watchlist_summary_loaded"] = True
+            with header_col3:
                 if st.button("Refresh", help="Clear cached data and fetch fresh info", key="refresh_watchlist"):
                     # Clear ticker info cache for all watchlist items
                     cache_dir = _PROJECT_ROOT / ".market_cache"
@@ -4681,7 +4703,14 @@ def market_analysis_page():
                             if info_cache.exists():
                                 info_cache.unlink()
                                 st.toast(f"Cleared cache for {item.ticker}")
+                    st.session_state["market_watchlist_summary_loaded"] = True
                     st.rerun()
+
+            if not st.session_state.get("market_watchlist_summary_loaded", False):
+                st.caption(
+                    f"{len(watchlist_items)} tickers in watchlist. Load the summary when you want a full refresh."
+                )
+                return
             
             st.caption("Sorted by importance score (technical signals, RSI extremes, earnings proximity)")
             
@@ -6243,10 +6272,22 @@ def main():
     st.sidebar.markdown("---")
     
     # Navigation menu
+    page_options = [
+        "Dashboard",
+        "Portfolio & Taxes",
+        "Market Analysis",
+        "Macro Dashboard",
+        "IPO Vintage Tracker",
+        "Partnerships",
+        "13F Holdings",
+    ]
+    query_page = st.query_params.get("page")
+    page_index = page_options.index(query_page) if query_page in page_options else 0
     page = st.sidebar.radio(
         "Navigation",
-        ["Dashboard", "Portfolio & Taxes", "Market Analysis", "Macro Dashboard", "IPO Vintage Tracker", "Partnerships", "13F Holdings"],
-        label_visibility="collapsed"
+        page_options,
+        index=page_index,
+        label_visibility="collapsed",
     )
     
     st.sidebar.markdown("---")
