@@ -3,6 +3,24 @@
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
 
+## [0.1.10.0] - 2026-04-27
+
+### Added
+
+- **SEC Form 4 insider activity:** Market Analysis > Corporate Activity now uses direct SEC EDGAR Form 4 / 4-A filings as the primary free insider-transaction source, with Finnhub retained as a configured fallback.
+- **Insider verification UX:** Insider rows now show source, filing date, price, open-market flag, officer/director context, SEC filing links, and an OpenInsider cross-check link for human verification.
+- **Corporate Activity filters:** Added compact filters for open-market transactions, officer/director rows, and minimum transaction value.
+
+### Changed
+
+- **Market Analysis section rendering:** Replaced eager Streamlit tabs with an active section control so Corporate Activity no longer waits behind unrelated Valuation work.
+- **Market Analysis deep links:** `page`, `ticker`, and `section` query params can seed a direct research view such as Corporate Activity for AAPL.
+- **Watchlist summary:** Large watchlists now load summary metrics on demand instead of blocking ticker search on page load.
+
+### Fixed
+
+- **Corporate Activity responsiveness:** SEC insider rows render without waiting for hidden valuation calls or full watchlist refreshes.
+
 ## [0.1.9.0] - 2026-04-25
 
 ### Added
