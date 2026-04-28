@@ -199,6 +199,29 @@ R/Y/G pills are **heuristic** (see `RULE_SET_VERSION`); FRED **as-of** is the la
 
 ---
 
+## `insider_service.fetch_insider_transactions_sec`
+
+**Purpose:** Recent insider transactions for Market Analysis from free SEC EDGAR Form 4 / 4-A filings.
+
+| Output field | Type | Notes |
+|-------------|------|--------|
+| `date` | `datetime.date` | Transaction date |
+| `filing_date` | `datetime.date` or `None` | SEC filing date |
+| `transaction` | str | Normalized to `Buy`, `Sale`, or `Other` |
+| `transaction_raw` | str | SEC transaction code, e.g. `P`, `S`, `A` |
+| `shares`, `price`, `value` | number | `value` is shares x price when SEC reports a price |
+| `name`, `relationship` | str | Reporting owner and officer/director label where available |
+| `sec_link` | str | Direct SEC filing document URL |
+| `source`, `open_market`, `is_officer`, `is_director` | metadata | `source` is `sec`; open-market is true for `P`/`S` |
+
+**Sources:** SEC company tickers JSON, submissions JSON, and filing XML under `Archives/edgar/data`. `market_data.fetch_insider_transactions()` uses this first, then Finnhub only as a fallback when configured. OpenInsider is only linked in the UI for manual cross-checking.
+
+**Caching:** `.edgar_cache/insider_{TICKER}.json` with a 6h TTL, plus Streamlit `_cached_fetch_insider_transactions(ticker)` TTL 600s in Market Analysis.
+
+**Failures:** Missing CIK, SEC throttling/network errors, malformed XML, no recent Form 4 rows. The Market Analysis table shows an empty state rather than requiring any paid API key.
+
+---
+
 ## `data_schemas.build_dashboard_export_payload`
 
 **Purpose:** One JSON object combining dashboard analytics for download (Dashboard **⬇ JSON snapshot** button).

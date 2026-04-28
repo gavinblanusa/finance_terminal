@@ -11,7 +11,6 @@ This module provides:
 
 import os
 import json
-import hashlib
 import requests
 import time
 from datetime import datetime, timedelta, date
@@ -20,10 +19,11 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
+import streamlit as st
 import yfinance as yf
 from dotenv import load_dotenv
-from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from insider_service import fetch_insider_transactions_sec
 
 # Load environment variables from .env file
 load_dotenv()
@@ -250,7 +250,7 @@ def _fetch_and_cache_ticker_info(ticker: str) -> Dict:
             try:
                 earnings_dt = datetime.strptime(cached_info['earnings_date'], '%Y-%m-%d').date()
                 cached_info['days_to_earnings'] = (earnings_dt - datetime.now().date()).days
-            except:
+            except Exception:
                 pass
         return cached_info
     
@@ -396,7 +396,7 @@ def _fetch_and_cache_ticker_info(ticker: str) -> Dict:
                         try:
                             earnings_dt = datetime.strptime(info_data['earnings_date'], '%Y-%m-%d').date()
                             info_data['days_to_earnings'] = (earnings_dt - datetime.now().date()).days
-                        except:
+                        except Exception:
                             pass
         except Exception as e:
             print(f"[{ticker}] Error getting calendar: {e}")
@@ -1850,7 +1850,7 @@ def _fetch_revenue_from_yfinance(stock, ticker: str, years: int) -> list:
                             dt = dt.replace(tzinfo=None)
                         
                         date_value_pairs.append((dt, float(val), False))
-                    except Exception as e:
+                    except Exception:
                         continue
         
         # Process annual data for longer time periods
@@ -1977,7 +1977,7 @@ def _fetch_alpha_vantage_income_statement(ticker: str) -> list:
             
             # Check for API limit message
             if 'Note' in data or 'Information' in data:
-                print(f"[Alpha Vantage] API limit reached")
+                print("[Alpha Vantage] API limit reached")
                 return []
             
             # Get quarterly reports
@@ -2003,7 +2003,7 @@ def _fetch_alpha_vantage_income_statement(ticker: str) -> list:
                 if revenue_data:
                     _save_av_cache(ticker, 'income_statement', revenue_data)
             else:
-                print(f"[Alpha Vantage] No quarterly reports in response")
+                print("[Alpha Vantage] No quarterly reports in response")
         else:
             print(f"[Alpha Vantage] Income statement API error: {response.status_code}")
             
@@ -2357,11 +2357,11 @@ def _fetch_alpha_vantage_earnings(ticker: str, retry_on_limit: bool = True) -> l
             # Check for API limit message
             if 'Note' in data or 'Information' in data:
                 if retry_on_limit:
-                    print(f"[Alpha Vantage] Rate limit hit, waiting 12s and retrying...")
+                    print("[Alpha Vantage] Rate limit hit, waiting 12s and retrying...")
                     time.sleep(12)  # Wait for the minute window to pass
                     return _fetch_alpha_vantage_earnings(ticker, retry_on_limit=False)
                 else:
-                    print(f"[Alpha Vantage] API limit reached or invalid key")
+                    print("[Alpha Vantage] API limit reached or invalid key")
                     return []
             
             quarterly = data.get('quarterlyEarnings', [])
@@ -2386,7 +2386,7 @@ def _fetch_alpha_vantage_earnings(ticker: str, retry_on_limit: bool = True) -> l
                 if earnings_data:
                     _save_av_cache(ticker, 'earnings', earnings_data)
             else:
-                print(f"[Alpha Vantage] No earnings data in response")
+                print("[Alpha Vantage] No earnings data in response")
         else:
             print(f"[Alpha Vantage] API error: {response.status_code}")
             
@@ -2420,7 +2420,7 @@ def _calculate_pe_from_alpha_vantage(ticker: str, years: int = 2) -> list:
         hist = stock.history(period=period, interval="1d")
         
         if hist.empty:
-            print(f"[Alpha Vantage P/E] No price history from yfinance")
+            print("[Alpha Vantage P/E] No price history from yfinance")
             return pe_history
         
         # Remove timezone from price index for comparison
@@ -2559,11 +2559,11 @@ def _fetch_finnhub_earnings(ticker: str) -> list:
                 if len(earnings_data) >= 8:
                     _save_av_cache(ticker, 'finnhub_earnings', earnings_data)
             else:
-                print(f"[Finnhub] No earnings data in response")
+                print("[Finnhub] No earnings data in response")
         elif response.status_code == 401:
-            print(f"[Finnhub] Invalid API key")
+            print("[Finnhub] Invalid API key")
         elif response.status_code == 429:
-            print(f"[Finnhub] Rate limit reached")
+            print("[Finnhub] Rate limit reached")
         else:
             print(f"[Finnhub] API error: {response.status_code}")
             
@@ -2596,7 +2596,7 @@ def _calculate_pe_from_finnhub(ticker: str, years: int = 2) -> list:
         hist = stock.history(period=period, interval="1d")
         
         if hist.empty:
-            print(f"[Finnhub P/E] No price history from yfinance")
+            print("[Finnhub P/E] No price history from yfinance")
             return pe_history
         
         # Remove timezone from price index
@@ -2708,7 +2708,7 @@ def _fetch_fmp_historical_pe(ticker: str, years: int = 2) -> list:
                                 'pe': round(float(pe_ratio), 2),
                                 'source': 'fmp'
                             })
-                    except Exception as e:
+                    except Exception:
                         continue
                 
                 print(f"[FMP] Retrieved {len(pe_history)} quarters of P/E data for {ticker}")
@@ -2829,7 +2829,7 @@ def _calculate_pe_from_earnings(stock, years: int = 2) -> list:
                             'pe': round(pe, 2),
                             'source': 'calculated'
                         })
-            except Exception as e:
+            except Exception:
                 continue
         
         print(f"[Calc P/E] Calculated {len(pe_history)} quarters of P/E data")
@@ -3000,7 +3000,7 @@ def get_valuation_chart_data(ticker: str, years: int = 2, skip_db: bool = False)
                     # Parse the period string to datetime
                     try:
                         est_date = pd.to_datetime(est['period'])
-                    except:
+                    except Exception:
                         continue
                     revenue_data.append({
                         'date': est_date,
@@ -3536,6 +3536,37 @@ def fetch_insider_transactions(
     to_date: Optional[date] = None,
 ) -> List[Dict]:
     """
+    Fetch insider transactions from SEC Form 4 first, then Finnhub when configured.
+
+    Returns list of dicts: date (date), transaction (Buy/Sale), shares, value,
+    name, relationship, sec_link, source, filing_date, price, open_market,
+    is_officer, is_director.
+    """
+    try:
+        sec_rows = fetch_insider_transactions_sec(ticker, from_date=from_date, to_date=to_date)
+        if sec_rows:
+            return sec_rows
+    except Exception as e:
+        print(f"[SEC Insider] fallback for {ticker}: {e}")
+    return _fetch_insider_transactions_finnhub(ticker, from_date=from_date, to_date=to_date)
+
+
+def _parse_insider_number(value, default: float = 0.0) -> float:
+    try:
+        s = str(value or "").strip().replace(",", "")
+        if not s:
+            return default
+        return float(s)
+    except (TypeError, ValueError):
+        return default
+
+
+def _fetch_insider_transactions_finnhub(
+    ticker: str,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+) -> List[Dict]:
+    """
     Fetch insider transactions for a ticker from Finnhub.
     Returns list of dicts: date (date), transaction (Buy/Sale), shares, value, name, relationship, sec_link.
     Cached ~24h by ticker.
@@ -3559,7 +3590,22 @@ def fetch_insider_transactions(
                             d = datetime.strptime(d[:10], "%Y-%m-%d").date()
                         except ValueError:
                             continue
-                    out.append({**item, "date": d})
+                    filing_date = item.get("filing_date") or d
+                    if isinstance(filing_date, str):
+                        try:
+                            filing_date = datetime.strptime(filing_date[:10], "%Y-%m-%d").date()
+                        except ValueError:
+                            filing_date = d
+                    out.append({
+                        **item,
+                        "date": d,
+                        "filing_date": filing_date,
+                        "source": item.get("source") or "finnhub",
+                        "price": item.get("price"),
+                        "open_market": bool(item.get("open_market", True)),
+                        "is_officer": bool(item.get("is_officer", False)),
+                        "is_director": bool(item.get("is_director", False)),
+                    })
                 return out
         except (json.JSONDecodeError, OSError):
             pass
@@ -3604,7 +3650,7 @@ def fetch_insider_transactions(
                 (t.get("transaction") or t.get("transactionType") or t.get("type") or "")
                 .strip()
             )
-            shares_val = int(t.get("shares") or t.get("share") or t.get("numberOfShares") or 0)
+            shares_val = int(_parse_insider_number(t.get("shares") or t.get("share") or t.get("numberOfShares") or 0))
             # If no transaction type, infer from shares (negative = sale) or default Sale
             if not trans:
                 trans = "Sale" if shares_val <= 0 else "Purchase"
@@ -3616,25 +3662,49 @@ def fetch_insider_transactions(
                 trans_norm = "Buy"
             else:
                 trans_norm = "Sale"
+            price_raw = (
+                t.get("transactionPrice")
+                or t.get("transactionPricePerShare")
+                or t.get("price")
+                or t.get("sharePrice")
+            )
+            price = _parse_insider_number(price_raw, default=0.0) if price_raw is not None else 0.0
+            price_value = price if price > 0 else None
+            filing_date = dt
+            open_market = u in ("P", "S") or "PURCHASE" in u or "SALE" in u
 
             out.append({
                 "date": dt,
+                "filing_date": filing_date,
                 "transaction": trans_norm,
                 "transaction_raw": trans,
                 "shares": shares_val,
                 "value": int(t.get("USDValue") or t.get("value") or t.get("totalValue") or 0),
+                "price": price_value,
                 "name": (
                     (t.get("insiderTradings") or t.get("name") or t.get("reportingName") or t.get("insiderName") or "")
                     .strip()
                 ),
                 "relationship": (t.get("relationship") or t.get("reportingOwnerTitle") or "").strip(),
                 "sec_link": (t.get("SECForm4Link") or t.get("secLink") or t.get("filingUrl") or "").strip(),
+                "source": "finnhub",
+                "open_market": open_market,
+                "is_officer": False,
+                "is_director": False,
             })
         # Cache only when we have data (avoid caching empty for 24h)
         if out:
             to_cache = []
             for item in out:
-                c = {**item, "date": item["date"].strftime("%Y-%m-%d") if hasattr(item["date"], "strftime") else str(item["date"])}
+                c = {
+                    **item,
+                    "date": item["date"].strftime("%Y-%m-%d") if hasattr(item["date"], "strftime") else str(item["date"]),
+                    "filing_date": (
+                        item["filing_date"].strftime("%Y-%m-%d")
+                        if hasattr(item.get("filing_date"), "strftime")
+                        else str(item.get("filing_date") or "")
+                    ),
+                }
                 to_cache.append(c)
             try:
                 CACHE_DIR.mkdir(exist_ok=True)
@@ -4200,8 +4270,6 @@ def _fetch_fcf_from_yfinance(stock, ticker: str) -> Optional[float]:
         
     return None
 
-import streamlit as st
-
 def _fetch_wacc_inputs(stock, ticker: str) -> dict:
     """
     Fetch WACC components. 
@@ -4348,4 +4416,3 @@ def _cached_get_dcf_baseline(ticker: str) -> Optional[dict]:
     except Exception as e:
         print(f"[{ticker}] Error building DCF baseline: {e}")
         return None
-

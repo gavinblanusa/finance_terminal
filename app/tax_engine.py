@@ -12,13 +12,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import List, Dict, Optional, Tuple
-from collections import defaultdict
 import time
 import os
 import requests
 import yfinance as yf
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from dotenv import load_dotenv
 from models import Trades, TradeType
 
@@ -98,7 +96,7 @@ def fetch_price_alpha_vantage(ticker: str) -> Optional[Decimal]:
         Price as Decimal, or None if unavailable
     """
     if not ALPHA_VANTAGE_API_KEY:
-        print(f"Alpha Vantage: No API key configured")
+        print("Alpha Vantage: No API key configured")
         return None
     
     try:
@@ -996,4 +994,3 @@ def import_trades_from_csv(
     db_session.commit()
     
     return successful, failed, duplicates
-

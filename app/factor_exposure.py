@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
+import numpy as np
 import requests
-from sklearn.linear_model import LinearRegression
 
 # Match portfolio_insights beta stability window
 MIN_OVERLAP_DAYS = 120
@@ -129,13 +129,16 @@ def _regress_one_ticker(
     if len(aligned) < MIN_OVERLAP_DAYS:
         return None, None, len(aligned)
 
-    y = (aligned["stock_r"] - aligned["RF"]).values.reshape(-1, 1)
+    y = (aligned["stock_r"] - aligned["RF"]).values
     X = aligned[FACTOR_COLS].values
-    reg = LinearRegression(fit_intercept=True)
-    reg.fit(X, y.ravel())
-    r2 = float(reg.score(X, y.ravel()))
-    betas = {FACTOR_COLS[i]: float(reg.coef_[i]) for i in range(len(FACTOR_COLS))}
-    betas["_alpha"] = float(reg.intercept_)
+    X_design = np.column_stack([np.ones(len(X)), X])
+    coef, *_ = np.linalg.lstsq(X_design, y, rcond=None)
+    y_hat = X_design @ coef
+    ss_res = float(np.sum((y - y_hat) ** 2))
+    ss_tot = float(np.sum((y - float(np.mean(y))) ** 2))
+    r2 = 1.0 if ss_tot == 0 and ss_res < 1e-12 else (1.0 - ss_res / ss_tot if ss_tot else 0.0)
+    betas = {FACTOR_COLS[i]: float(coef[i + 1]) for i in range(len(FACTOR_COLS))}
+    betas["_alpha"] = float(coef[0])
     return betas, r2, len(aligned)
 
 

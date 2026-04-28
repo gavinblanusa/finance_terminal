@@ -210,7 +210,7 @@ Load from `.env` in project root. Used by:
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | `db.py` | PostgreSQL connection |
 | `ALPHA_VANTAGE_API_KEY` or `ALPHA_API_KEY` | `market_data.py`, `tax_engine.py` | Valuation/earnings; price fallback |
 | `FMP_API_KEY` | `market_data.py`, `financetoolkit_adapter.py` | Company profile, fundamentals; FinanceToolkit uses it for ratio data when enabled |
-| `FINNHUB_API_KEY` | `market_data.py`, `ipo_service.py` | Earnings, news; IPO calendar |
+| `FINNHUB_API_KEY` | `market_data.py`, `ipo_service.py` | Earnings, news; IPO calendar; fallback insider transactions |
 | `MASSIVE_API_KEY` | `market_data.py` (via `api_clients`), `openbb_fetch.py` | Polygon price/OHLCV (OpenBB uses `POLYGON_API_KEY`; `openbb_fetch` copies from `MASSIVE_API_KEY` if unset) |
 | `POLYGON_API_KEY` | `openbb_fetch.py` | OpenBB Polygon provider (optional; if unset, copied from `MASSIVE_API_KEY`) |
 | `OPENBB_REQUEST_TIMEOUT_SEC` | `openbb_fetch.py` | Per-try timeout for OpenBB provider calls (default: 30) |
@@ -230,13 +230,14 @@ Load from `.env` in project root. Used by:
 ### Persistence and caches
 
 - **PostgreSQL** (`db.py` + `models.py`): `trades`, `watchlist`, `ipo_registry`, `valuation_history`, `company_profile`, `company_fundamentals`, `peer_overrides`.
-- **File caches** (project root): `.market_cache/` (OHLCV, ticker info, TV signals, Alpha Vantage responses, peers candidates), `.ipo_cache/` (IPO calendar JSON), `.edgar_cache/` (EDGAR submissions, 8-K, `partnership_events.json`, `partnership_filer_market_caps.json`, negative cache for skipped 8-Ks).
+- **File caches** (project root): `.market_cache/` (OHLCV, ticker info, TV signals, Alpha Vantage responses, peers candidates), `.ipo_cache/` (IPO calendar JSON), `.edgar_cache/` (EDGAR submissions, Form 4 insider rows, 8-K, `partnership_events.json`, `partnership_filer_market_caps.json`, negative cache for skipped 8-Ks).
 - **In-memory**: `tax_engine` price cache (15 min TTL).
 
 ### Conventions and gotchas
 
 - **DB session**: Pages get a session via `get_db_session()`; pass it into `TaxEngine` and any code that reads/writes `Trades` or other models. Don’t create a new engine in feature modules.
 - **Market data rate limits**: Alpha Vantage (5/min), EODHD (20/day), etc. See `market_data.py` and `api_clients.py` for throttling. Prefer cache/DB before external calls.
+- **Insider transactions**: Market Analysis uses SEC EDGAR Form 4 as the primary free source via `insider_service.py`; Finnhub is a configured fallback; OpenInsider is linked for human cross-checking only.
 - **Valuation**: Already DB-first in `fetch_valuation_data()`; TradingView and valuation have “Save” buttons—see `docs/MARKET_ANALYSIS_DATA_REFACTOR.md` for planned auto-save and freshness behavior.
 
 ### More detail
@@ -247,4 +248,3 @@ Load from `.env` in project root. Used by:
 - **`docs/ARCHITECTURE.md`** — Data flow, page→module map, and refactor notes.
 - **`docs/OPENBB_COVERAGE.md`** — OpenBB datasets, provider chains, and CI drift check vs the registry.
 - **`docs/MARKET_ANALYSIS_DATA_REFACTOR.md`** — Refactor plan for market analysis data (auto-save, DB/cache-first).
-
