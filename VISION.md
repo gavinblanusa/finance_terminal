@@ -12,20 +12,21 @@ This project is a personal compilation of capabilities found in platforms like:
 
 The goal is one terminal that combines these themes: portfolio and tax control, market research and valuation, SEC and regulatory intelligence, IPO and events, and (over time) screening, alerts, and optional AI summarization.
 
-## Current scope (six areas)
+## Current scope (seven areas)
 
 1. **Dashboard** — Portfolio value, allocation, tax summary, unrealized gains, alerts for lots nearing long-term; macro, FI ETF/^TNX proxy strip, ranked news; Fama–French factor loadings, illustrative TCA, JSON export with optional session TCA (see README).
 2. **Portfolio & Taxes** — Trade entry and CSV import, HIFO tax lots, long-term vs short-term tracking, cost basis and gain per lot.
-3. **Market Analysis** — Ticker research, OHLCV and TradingView-style charts, valuation (P/E, revenue), company profile, fundamentals, news, technical signals; ATM options IV term structure; Black–Scholes European panel (theory).
-4. **IPO Vintage Tracker** — Upcoming IPO calendar, 1/2/3-year post-IPO performance, registry and anniversary alerts.
-5. **Partnerships** — SEC 8-K Item 1.01 partnership events, configurable watchlist and counterparty highlighting.
-6. **13F Institutional Holdings** — Quarterly 13F filings by institution, holdings view, compare quarters, by-CUSIP and overlap analysis.
+3. **Market Analysis** — Ticker research, OHLCV and TradingView-style charts, valuation (P/E, revenue), company profile, fundamentals, news, technical signals, SEC Form 4 insider activity, OpenInsider cross-check links; ATM options IV term structure; Black–Scholes European panel (theory).
+4. **Macro Dashboard** — US FRED indicators, Sahm rule, sector SPDRs vs SPY, pair ratio charts, macro cache controls.
+5. **IPO Vintage Tracker** — Upcoming IPO calendar, 1/2/3-year post-IPO performance, registry and anniversary alerts.
+6. **Partnerships** — SEC 8-K Item 1.01 partnership events, configurable watchlist and counterparty highlighting.
+7. **13F Institutional Holdings** — Quarterly 13F filings by institution, holdings view, compare quarters, by-CUSIP and overlap analysis.
 
 ## Direction / roadmap
 
 - **Screening and filters** — Stock and fund screeners with configurable criteria.
 - **Alerts and notifications** — Custom alerts for price, filings, earnings, or portfolio events.
-- **Expanded SEC** — Insider transactions, Congress-style trading data (where available), 13D/F and other filing types.
+- **Expanded SEC** — Congress-style trading data (where available), richer insider alerts, 13D/F and other filing types.
 - **Optional AI summarization** — Summaries of filings, earnings calls, or news (when adding AI tooling).
 - **API or export** — Programmatic access or export of your portfolio and saved data; `app/data_schemas.py` and `docs/DATA_LAYER_REFERENCE.md` define JSON-friendly shapes; **`app/terminal_api.py`** (FastAPI + uvicorn) serves `/v1/macro`, `/v1/portfolio`, `/v1/analytics/dashboard`, etc.
 
@@ -33,7 +34,7 @@ The goal is one terminal that combines these themes: portfolio and tax control, 
 
 - **Frontend:** Streamlit (with streamlit-lightweight-charts for main price chart).
 - **Database:** PostgreSQL (SQLAlchemy) — trades, watchlist, IPO registry, valuation history, company profile/fundamentals.
-- **Data layer:** OpenBB (primary), FinanceToolkit (fundamentals), Polygon/FMP/Finnhub/Alpha Vantage/EODHD/Twelve Data for prices and fundamentals; SEC EDGAR for 8-K and 13F.
-- **Caches:** File caches at project root (`.market_cache/`, `.ipo_cache/`, `.edgar_cache/`) and DB-first where applicable.
+- **Data layer:** OpenBB (primary), FinanceToolkit (fundamentals), Polygon/FMP/Finnhub/Alpha Vantage/EODHD/Twelve Data for prices and fundamentals; SEC EDGAR for 8-K, Form 4, and 13F.
+- **Caches:** File caches at project root (`.market_cache/`, `.macro_cache/`, `.ipo_cache/`, `.edgar_cache/`) and DB-first where applicable.
 
 For implementation details, entry points, and data flow, **README.md** and **docs/ARCHITECTURE.md** are the source of truth.

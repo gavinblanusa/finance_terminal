@@ -91,7 +91,7 @@ Refactor note: See **MARKET_ANALYSIS_DATA_REFACTOR.md** for planned auto-save an
 - **Data layer contracts**: Field-level documentation and failure modes for macro, PORT-lite, factors, TCA, options, FI strip, and **HTTP routes** live in **`docs/DATA_LAYER_REFERENCE.md`**. Serializable shapes are defined in **`app/data_schemas.py`**. **`app/terminal_api.py`** exposes read-only FastAPI endpoints; portfolio shape is built by **`app/portfolio_snapshot.py`** (also used by Streamlit `get_portfolio_data`).
 - **DB session**: Created once per request/flow in `main.py` (e.g. `get_db_session()`). Passed into `TaxEngine` and any code that touches `Trades`, `Watchlist`, `IPO_Registry`, or cached valuation/profile/fundamentals. Do not open multiple sessions for the same logical operation.
 - **Rate limits**: Alpha Vantage (5/min), EODHD (20/day), etc. Caches and DB-first paths are the main mitigation; see `market_data.py` and `api_clients.py` for throttling.
-- **Caches on disk**: All under project root: `.market_cache/`, `.ipo_cache/`, `.edgar_cache/`. Safe to clear for a full refresh; app will refill on next use. Insider Form 4 rows live in `.edgar_cache/insider_{TICKER}.json`.
+- **Caches on disk**: All under project root: `.market_cache/`, `.macro_cache/`, `.ipo_cache/`, `.edgar_cache/`. Safe to clear for a full refresh; app will refill on next use. Macro Dashboard FRED files live in `.macro_cache/`; insider Form 4 rows live in `.edgar_cache/insider_{TICKER}.json`.
 
 ---
 

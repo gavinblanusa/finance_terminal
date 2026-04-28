@@ -60,7 +60,7 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | Path | Purpose |
 |------|---------|
 | `app/` | Application package (all app code) |
-| `app/main.py` | Streamlit app: dashboard, portfolio/taxes, market analysis, IPO tracker, partnerships, 13F holdings |
+| `app/main.py` | Streamlit app: dashboard, portfolio/taxes, market analysis, macro dashboard, IPO tracker, partnerships, 13F holdings |
 | `app/models.py` | SQLAlchemy models: Trades, Watchlist, IPO_Registry, ValuationHistory, CompanyProfile, CompanyFundamentals |
 | `app/db.py` | PostgreSQL connection and session management |
 | `app/tax_engine.py` | HIFO tax lot tracking, gain calculations, CSV import |
@@ -77,7 +77,7 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/analytics_export.py` | Compose macro + PORT + factors payload for REST |
 | `app/terminal_api.py` | FastAPI: `/v1/macro`, `/v1/fi`, `/v1/portfolio`, `/v1/analytics/dashboard` (optional attribution query params) |
 | `app/relevant_news.py` | Dashboard ranked headlines across portfolio + watchlist |
-| `app/market_data.py` | OHLCV cache, valuation (P/E, revenue), TradingView-style signals, company profile/fundamentals/news |
+| `app/market_data.py` | OHLCV cache, valuation (P/E, revenue), TradingView-style signals, company profile/fundamentals/news, insider transaction fallback orchestration |
 | `app/market_warehouse.py` | Optional local OHLCV from [market-data-warehouse](https://github.com/joemccann/market-data-warehouse) (Parquet bronze or DuckDB) when env vars set |
 | `app/openbb_fetch.py` | OpenBB fetch kernel: lazy `obb`, provider chain, timeouts, `gft.openbb` logging |
 | `app/openbb_provider_registry.py` | Provider try-order per dataset (`OPENBB_PROVIDER_CHAINS`); drift-checked vs `docs/OPENBB_COVERAGE.md` |
@@ -85,6 +85,7 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/financetoolkit_adapter.py` | FinanceToolkit layer (fundamentals, optional current P/E and PEG) |
 | `app/api_clients.py` | Price/OHLCV APIs: Polygon, Twelve Data, EODHD (with rate limits) |
 | `app/ipo_service.py` | IPO calendar (Finnhub), vintage performance, price history |
+| `app/insider_service.py` | SEC EDGAR Form 4 / 4-A insider transactions for Market Analysis |
 | `app/edgar_service.py` | SEC EDGAR 8-K filings, partnership-event extraction |
 | `app/thirteenf_service.py` | SEC 13F institutional holdings |
 | `app/partnerships_config.py` | Config: watched tickers and counterparties for partnerships page |
@@ -231,7 +232,7 @@ Load from `.env` in project root. Used by:
 ### Persistence and caches
 
 - **PostgreSQL** (`db.py` + `models.py`): `trades`, `watchlist`, `ipo_registry`, `valuation_history`, `company_profile`, `company_fundamentals`, `peer_overrides`.
-- **File caches** (project root): `.market_cache/` (OHLCV, ticker info, TV signals, Alpha Vantage responses, peers candidates), `.ipo_cache/` (IPO calendar JSON), `.edgar_cache/` (EDGAR submissions, Form 4 insider rows, 8-K, `partnership_events.json`, `partnership_filer_market_caps.json`, negative cache for skipped 8-Ks).
+- **File caches** (project root): `.market_cache/` (OHLCV, ticker info, TV signals, Alpha Vantage responses, peers candidates), `.macro_cache/` (Macro Dashboard FRED series), `.ipo_cache/` (IPO calendar JSON), `.edgar_cache/` (EDGAR submissions, Form 4 insider rows, 8-K, `partnership_events.json`, `partnership_filer_market_caps.json`, negative cache for skipped 8-Ks).
 - **In-memory**: `tax_engine` price cache (15 min TTL).
 
 ### Conventions and gotchas
