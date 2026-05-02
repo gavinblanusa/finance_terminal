@@ -41,14 +41,15 @@ From `docs/plans/morning-stack-approach-b.md` (Approach B implementation + CEO/d
 
 ## Macro Dashboard v2 / autoplan deferrals (2026-04-24)
 
-**Shipped in v0.1.9.0:** FRED-backed Macro Dashboard page, `MACRO_DASHBOARD_METRICS` + band rules, Sahm from UNRATE, sector SPDR table + pair ratio, targeted refresh + on-disk cache UX, tests in `tests/test_macro_*.py`.
-
-From `docs/plans/PLAN-macro-dashboard-v2.md` (after `/autoplan` on main):
+From `docs/plans/PLAN-macro-dashboard-v2.md` (after `/autoplan` on main). P0 scope (registry, bands, methodology, targeted refresh) shipped in **v0.1.9.0**.
 
 - **Consensus / economist surprise** feeds, **global** EM/FX stack beyond the US FRED + Yahoo stack.
 - **Macro calendar** strip (even manual week-ahead) and **state-change alerts** when 2+ bands flip.
-- **Deeper Koyfin-class** edge (z-score / regime modes) once P0 **bands + registry + methodology** are shipped.
-- **Narrowing `st.cache_data.clear()`** on Macro refresh: global clear is a known footgun; fix or keep documented.
+- **Deeper Koyfin-class** edge (z-score / regime modes) on top of the current banded reads.
+
+## Completed
+
+- **Macro Dashboard v2 (P0):** **v0.1.9.0 (2026-04-25)** — FRED-backed page, `MACRO_DASHBOARD_METRICS` + band rules, Sahm from UNRATE, sector table + pair ratio, targeted refresh + `.macro_cache/`, `tests/test_macro_*.py`.
 
 ## QA follow-ups (2026-04-01)
 

@@ -621,10 +621,10 @@ This is a template for integrating one repo with minimal risk. A future agent ca
 
 ## Project file reference (for implementers)
 
-- **App entry and pages:** `app/main.py` — `main()`, `dashboard_page()`, `portfolio_taxes_page()`, `market_analysis_page()`, `ipo_tracker_page()`, `partnerships_page()`, `thirteenf_page()`. Run from project root: `streamlit run app/main.py`.
-- **Data and APIs:** `app/market_data.py` (OHLCV, valuation, signals, profile, news), `app/openbb_adapter.py`, `app/api_clients.py` (Polygon, Twelve Data, EODHD), `app/ipo_service.py`, `app/edgar_service.py`, `app/thirteenf_service.py`.
+- **App entry and pages:** `app/main.py` — `main()`, `dashboard_page()`, `portfolio_taxes_page()`, `market_analysis_page()`, `macro_dashboard_page()`, `ipo_tracker_page()`, `partnerships_page()`, `thirteenf_page()`. Run from project root: `streamlit run app/main.py`.
+- **Data and APIs:** `app/market_data.py` (OHLCV, valuation, signals, profile, news, insider fallback orchestration), `app/insider_service.py` (SEC Form 4 rows), `app/macro_data.py` / `app/macro_indicators.py` / `app/macro_sector.py` (Macro Dashboard), `app/openbb_adapter.py`, `app/api_clients.py` (Polygon, Twelve Data, EODHD), `app/ipo_service.py`, `app/edgar_service.py`, `app/thirteenf_service.py`.
 - **Config:** `partnerships_config.py`, `thirteenf_config.py`; `.env` for API keys.
-- **Persistence:** `db.py`, `models.py`; caches: `.market_cache/`, `.ipo_cache/`, `.edgar_cache/`.
+- **Persistence:** `db.py`, `models.py`; caches: `.market_cache/`, `.macro_cache/`, `.ipo_cache/`, `.edgar_cache/`.
 - **Docs:** `docs/ARCHITECTURE.md`, `docs/MARKET_ANALYSIS_DATA_REFACTOR.md`, root `README.md` (“For AI and refactors” section).
 
 When you complete an integration, add a short “Implemented” note (e.g. `<!-- Implemented: YYYY-MM-DD repo-name in module.function -->`) so the next agent knows what is already in use.

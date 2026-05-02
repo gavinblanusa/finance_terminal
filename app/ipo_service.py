@@ -14,7 +14,6 @@ import requests
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, List, Tuple
 from pathlib import Path
-from decimal import Decimal
 from dataclasses import dataclass
 
 import pandas as pd
@@ -137,7 +136,7 @@ def _get_finnhub_ipo_list(days_ahead: int) -> List[IPOEntry]:
     cache_name = f"ipo_calendar_{days_ahead}d"
     cached_data = _load_from_cache(cache_name)
     if cached_data:
-        print(f"[Cache Hit] Loaded IPO calendar from cache")
+        print("[Cache Hit] Loaded IPO calendar from cache")
         return _parse_ipo_data(cached_data)
     if not FINNHUB_API_KEY:
         print("[Warning] FINNHUB_API_KEY not set, using mock data")
@@ -720,4 +719,3 @@ def clear_ipo_cache():
         for cache_file in CACHE_DIR.glob("*.json"):
             cache_file.unlink()
         print("IPO cache cleared")
-

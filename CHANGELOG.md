@@ -3,18 +3,36 @@
 All notable changes to this project are documented here. Version format: `MAJOR.MINOR.PATCH.MICRO`.
 
 
+## [0.1.10.0] - 2026-04-27
+
+### Added
+
+- **SEC Form 4 insider activity:** Market Analysis > Corporate Activity now uses direct SEC EDGAR Form 4 / 4-A filings as the primary free insider-transaction source, with Finnhub retained as a configured fallback.
+- **Insider verification UX:** Insider rows now show source, filing date, price, open-market flag, officer/director context, SEC filing links, and an OpenInsider cross-check link for human verification.
+- **Corporate Activity filters:** Added compact filters for open-market transactions, officer/director rows, and minimum transaction value.
+
+### Changed
+
+- **Market Analysis section rendering:** Replaced eager Streamlit tabs with an active section control so Corporate Activity no longer waits behind unrelated Valuation work.
+- **Market Analysis deep links:** `page`, `ticker`, and `section` query params can seed a direct research view such as Corporate Activity for AAPL.
+- **Watchlist summary:** Large watchlists now load summary metrics on demand instead of blocking ticker search on page load.
+
+### Fixed
+
+- **Corporate Activity responsiveness:** SEC insider rows render without waiting for hidden valuation calls or full watchlist refreshes.
+
 ## [0.1.9.0] - 2026-04-25
 
 ### Added
 
-- **Macro Dashboard (v2):** A dedicated page for US FRED + Yahoo context: R/Y/G status pills, economic temperature bar, per-metric charts (default 10Y window, x-axis range selector, log y for shock-heavy series), sector SPDR momentum vs **SPY**, and a rebased **pair ratio** (XLF / XLK, etc.). FRED keys in `app/openbb_adapter.py`, band rules in `app/macro_indicators.py` (`RULE_SET_VERSION` in methodology), file cache in `.macro_cache/`.
-- **Sahm rule (derived):** Computed locally from **UNRATE**; displayed with the rest of the registry.
+- **Macro Dashboard (v2):** Open **Macro Dashboard** in the sidebar to scan US macro: R/Y/G pills, a temperature bar, FRED-backed charts (10Y default view, 1Y–All range control, log y where history has huge spikes), sector SPDR momentum vs **SPY**, and a rebased **pair ratio** (e.g. XLF / XLK). Band rules live in `app/macro_indicators.py` (version in the methodology expander); series use `app/openbb_adapter.py` and on-disk **`.macro_cache/`**.
+- **Sahm rule:** You get the Sahm-style read from **UNRATE** on the same page (derived in-app, not a separate FRED download).
 
 ### Changed
 
-- **Refresh macro data:** Primary button, per-session “last click” time, and on-disk cache line (file count, newest `mtime`); clears `.macro_cache/` and targeted Streamlit cache keys without `st.cache_data.clear()`.
-- **Sector table:** Rounded % columns, JetBrains + tabular nums via the shared styler. Plotly mode bar set to **hover** on macro charts to reduce visual noise.
-- **ISM (PMI):** When the source is missing, a collapsed “why” expander points at FRED series drift instead of a dead-end info box alone.
+- **Refresh macro data:** Primary action, timestamp of your last refresh, and a line about on-disk cache age; clearing **`.macro_cache/`** and only the macro-related `st.cache_data` entries (no global cache wipe).
+- **Sector table:** Percent columns rounded, tape-style font; macro Plotly charts use a **hover** mode bar so the page stays calmer.
+- **ISM (PMI):** If the series is missing, expand **Why this metric is missing** for FRED ID / data-layer context instead of only a generic empty state.
 
 ## [0.1.8.0] - 2026-04-19
 

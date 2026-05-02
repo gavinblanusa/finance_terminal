@@ -4,7 +4,7 @@
 
 ### Overview
 
-Gavin Financial Terminal is a single-service Python/Streamlit app backed by a PG database. All app code lives in `app/`. See `README.md` for entry points, env vars, project structure, and the "For AI and refactors" section. See `docs/ARCHITECTURE.md` for data flow and page-to-module mapping. Dashboard factor loadings download Ken French data into `.market_cache/ff5_factors_daily.csv` (see `docs/DATA_LAYER_REFERENCE.md`). FI proxy strip and ^TNX for BS/rates use **yfinance** only. JSON export can include **TCA** from `st.session_state` after running TCA on the Dashboard. **Optional:** local [market-data-warehouse](https://github.com/joemccann/market-data-warehouse) OHLCV via `GFT_MARKET_WAREHOUSE_*` env vars (`app/market_warehouse.py`, wired in `market_data.fetch_ohlcv`).
+Gavin Financial Terminal is a single-service Python/Streamlit app backed by a PG database. All app code lives in `app/`. See `README.md` for entry points, env vars, project structure, and the "For AI and refactors" section. See `docs/ARCHITECTURE.md` for data flow and page-to-module mapping. Dashboard factor loadings download Ken French data into `.market_cache/ff5_factors_daily.csv` (see `docs/DATA_LAYER_REFERENCE.md`). The **Macro Dashboard** page caches FRED pulls under **`.macro_cache/`** (see `app/macro_data.py`). FI proxy strip and ^TNX for BS/rates use **yfinance** only. JSON export can include **TCA** from `st.session_state` after running TCA on the Dashboard. **Optional:** local [market-data-warehouse](https://github.com/joemccann/market-data-warehouse) OHLCV via `GFT_MARKET_WAREHOUSE_*` env vars (`app/market_warehouse.py`, wired in `market_data.fetch_ohlcv`).
 
 ### Starting services
 

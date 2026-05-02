@@ -267,8 +267,9 @@ def ohlcv_df_sufficient_for_request(
         return False
     if dmax < start_date or dmin > end_date:
         return False
-    # Requested window starts at start_date; require coverage back that far (IPO falls through to APIs).
-    if dmin > start_date:
+    # Requested window starts at start_date; allow the first trading bar to land
+    # just after a weekend/holiday, while still letting IPO-short panels fall through.
+    if dmin > start_date + timedelta(days=5):
         return False
     # Drop obviously stale snapshots (no bar within two weeks of requested end).
     if dmax < end_date - timedelta(days=14):

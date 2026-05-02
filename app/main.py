@@ -8,7 +8,6 @@ tax optimization, market analysis, and IPO vintage tracking.
 import json
 import os
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -20,22 +19,19 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 from db import get_db_session, init_db
 from models import Trades, TradeType, Watchlist, IPO_Registry
-from tax_engine import TaxEngine, import_trades_from_csv, fetch_prices_batch
+from tax_engine import import_trades_from_csv
 from ipo_service import (
     fetch_ipo_calendar,
     get_vintage_performance,
     get_ipo_price_history,
     check_vintage_anniversaries,
     clear_ipo_cache,
-    IPOEntry,
-    VintagePerformance
 )
 from market_data import (
     fetch_ohlcv,
     calculate_signals,
     calculate_tradingview_signals,
     get_ticker_summary,
-    get_current_signal,
     clear_cache,
     get_valuation_chart_data,
     get_company_profile,
@@ -54,14 +50,12 @@ from edgar_service import (
     partnership_events_caps_deferred,
     refresh_edgar_data,
 )
-from plotly_chart_rescale import render_plotly_chart_with_y_rescale
 from streamlit_lightweight_charts import renderLightweightCharts
 from chart_utils import df_to_technical_chart_data, build_technical_chart_config
 from partnerships_config import FILER_CAP_USD_MAX, FILER_CAP_USD_MIN
 from thirteenf_config import THIRTEENF_INSTITUTIONS
 from thirteenf_service import (
     get_13f_filings_for_institution,
-    get_13f_holdings,
     get_13f_holdings_by_quarter,
     get_13f_compare,
     get_holders_by_cusip,
@@ -2676,8 +2670,8 @@ def create_valuation_chart(valuation_data: dict) -> go.Figure:
     # === BOTTOM PANEL: Revenue Growth ===
     if not revenue_df.empty and len(revenue_df) > 0:
         # Separate historical and projected data
-        historical = revenue_df[revenue_df['is_projected'] == False].copy()
-        projected = revenue_df[revenue_df['is_projected'] == True].copy()
+        historical = revenue_df[~revenue_df['is_projected']].copy()
+        projected = revenue_df[revenue_df['is_projected']].copy()
         
         # Check if we have mixed growth types (YoY and QoQ)
         has_qoq = 'growth_type' in historical.columns and (historical['growth_type'] == 'qoq').any()
@@ -2913,9 +2907,6 @@ def create_tradingview_chart(df: pd.DataFrame, ticker: str, timeframe: str = '1W
     # === TOP PANEL: Momentum Oscillator ===
     if 'TV_Momentum' in df.columns:
         momentum = df['TV_Momentum'].fillna(0)
-        
-        # Create color array based on positive/negative values
-        colors = [COLORS['momentum_pos'] if v >= 0 else COLORS['momentum_neg'] for v in momentum]
         
         # Area fill for momentum
         fig.add_trace(
@@ -3371,6 +3362,9 @@ def market_analysis_page():
     col_search, col_refresh = st.columns([4, 1])
     
     with col_search:
+        query_ticker = st.query_params.get("ticker")
+        if query_ticker and not st.session_state.get("market_analysis_ticker"):
+            st.session_state["market_analysis_ticker"] = str(query_ticker).upper().strip()
         ticker_input = st.text_input(
             "Search ticker",
             placeholder="Enter ticker symbol (e.g., AAPL, GOOGL, MSFT)",
@@ -3432,10 +3426,22 @@ def market_analysis_page():
                     st.markdown('### Current signal')
                     st.markdown(get_signal_badge(summary['signal']), unsafe_allow_html=True)
                 st.markdown("---")
-                # === TABBED LAYOUT ===
-                tab_tech, tab_val, tab_corp = st.tabs(["Technicals", "Valuation", "Corporate Activity"])
+                # Streamlit tabs eagerly execute every section, which makes the
+                # SEC activity view wait behind unrelated valuation calls.
+                section_options = ["Technicals", "Valuation", "Corporate Activity"]
+                section_key = f"market_analysis_section_{ticker_input}"
+                query_section = st.query_params.get("section")
+                if query_section in section_options and section_key not in st.session_state:
+                    st.session_state[section_key] = query_section
+                analysis_section = st.radio(
+                    "Analysis section",
+                    section_options,
+                    horizontal=True,
+                    label_visibility="collapsed",
+                    key=section_key,
+                )
 
-                with tab_tech:
+                if analysis_section == "Technicals":
                     # === DUAL CHART ===
                     st.markdown("### Technical chart")
                 
@@ -3512,12 +3518,6 @@ def market_analysis_page():
                     if len(df) < 200:
                         st.caption("SMA 200 is shown with partial data (fewer than 200 trading days).")
                 
-                    # Insider transactions for chart overlay (optional)
-                    insider_list = []
-                    try:
-                        insider_list = _cached_fetch_insider_transactions(ticker_input)
-                    except Exception:
-                        pass
                     # TradingView Lightweight Charts: candlestick or line + volume + support lines + markers + RSI (zoom + double-click reset)
                     tech_data = df_to_technical_chart_data(df_display, strong_signals_only=strong_signals_only)
                     # Show markers when user wants any signals: all (show_signals) or strong-only (strong_signals_only)
@@ -3726,7 +3726,7 @@ def market_analysis_page():
                                 else:
                                     st.error("Failed to save TradingView signals.")
                 
-                with tab_val:
+                elif analysis_section == "Valuation":
                     # === VALUATION CHART ===
                     st.markdown("---")
                     st.markdown("### Valuation analysis")
@@ -4280,7 +4280,12 @@ def market_analysis_page():
                         with m3:
                             st.caption(f"d1={_bs_out.d1:.3f} · d2={_bs_out.d2:.3f}")
 
-                with tab_corp:
+                elif analysis_section == "Corporate Activity":
+                    insider_list = []
+                    try:
+                        insider_list = _cached_fetch_insider_transactions(ticker_input)
+                    except Exception:
+                        pass
                     # === COMPANY PROFILE (expander) ===
                     try:
                         profile = _cached_get_company_profile(ticker_input)
@@ -4307,8 +4312,11 @@ def market_analysis_page():
                         st.caption("Profile unavailable.")
                 
                     st.markdown("### Insider transactions")
+                    openinsider_url = f"https://openinsider.com/screener?s={ticker_input.upper().strip()}"
+                    st.caption("Source order: SEC Form 4 direct, then Finnhub fallback when configured. OpenInsider is a cross-check link only.")
+                    st.markdown(f"[OpenInsider cross-check]({openinsider_url})")
                     if not insider_list:
-                        st.caption("No recent insider data or API unavailable. Set FINNHUB_API_KEY for insider transactions.")
+                        st.caption("No recent SEC Form 4 insider transactions found for this ticker.")
                     else:
                         try:
                             profile = _cached_get_company_profile(ticker_input)
@@ -4321,10 +4329,32 @@ def market_analysis_page():
                             a = set((name or "").lower().split())
                             b = set((ceo or "").lower().split())
                             return bool(a and b and a == b)
+                        f1, f2, f3 = st.columns([1, 1, 1])
+                        with f1:
+                            open_market_only = st.checkbox(
+                                "Open-market only",
+                                value=False,
+                                key=f"insider_open_market_only_{ticker_input}",
+                            )
+                        with f2:
+                            officer_director_only = st.checkbox(
+                                "Officer/director only",
+                                value=False,
+                                key=f"insider_officer_director_only_{ticker_input}",
+                            )
+                        with f3:
+                            min_value = st.selectbox(
+                                "Minimum value",
+                                [0, 25_000, 100_000, 250_000],
+                                format_func=lambda v: "All" if v == 0 else f"${v:,}+",
+                                key=f"insider_min_value_{ticker_input}",
+                            )
                         rows = []
-                        for t in insider_list[:30]:
+                        for t in insider_list:
                             d = t.get("date")
                             d_str = d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)
+                            filing_d = t.get("filing_date")
+                            filing_str = filing_d.strftime("%Y-%m-%d") if hasattr(filing_d, "strftime") else (str(filing_d) if filing_d else "—")
                             name = (t.get("name") or "").strip()[:40]
                             role = (t.get("relationship") or "").strip()[:30]
                             if not role and ceo_name and _name_matches_ceo(name, ceo_name):
@@ -4332,43 +4362,69 @@ def market_analysis_page():
                             trans_type = t.get("transaction", "")
                             shares = t.get("shares", 0) or 0
                             value = t.get("value", 0) or 0
-                            if value <= 0 and shares > 0 and not df_display.empty:
+                            price = t.get("price")
+                            source = (t.get("source") or "unknown").strip().upper()
+                            open_market = bool(t.get("open_market", False))
+                            insider_is_officer_director = bool(t.get("is_officer") or t.get("is_director"))
+                            if not insider_is_officer_director:
+                                role_l = role.lower()
+                                insider_is_officer_director = "director" in role_l or "officer" in role_l
+                            if open_market_only and not open_market:
+                                continue
+                            if officer_director_only and not insider_is_officer_director:
+                                continue
+                            if min_value and value < min_value:
+                                continue
+                            if value <= 0 and shares > 0 and source != "SEC" and not df.empty:
                                 try:
                                     d_obj = d.date() if hasattr(d, "date") else d
                                     ts = pd.Timestamp(d_obj)
-                                    idx = df_display.index.get_indexer([ts], method="nearest")[0]
-                                    if 0 <= idx < len(df_display):
-                                        close = float(df_display.iloc[idx]["Close"])
+                                    idx = df.index.get_indexer([ts], method="nearest")[0]
+                                    if 0 <= idx < len(df):
+                                        close = float(df.iloc[idx]["Close"])
                                         value = int(shares * close)
                                 except Exception:
                                     pass
                             sec_link = (t.get("sec_link") or "").strip()
                             rows.append({
+                                "filing_date": filing_str,
                                 "date": d_str,
                                 "name": name,
                                 "role": role or "—",
                                 "type": trans_type,
                                 "shares": shares,
+                                "price": price,
                                 "value": value,
+                                "open_market": open_market,
+                                "source": source,
                                 "sec_link": sec_link,
                             })
-                        # Build HTML table with row colors (green tint = Buy, red tint = Sale)
-                        def _esc(s):
-                            return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;"))
-                        header = "<thead><tr><th>Date</th><th>Name</th><th>Role</th><th>Type</th><th>Shares</th><th>Value ($)</th><th>SEC</th></tr></thead><tbody>"
-                        body_parts = []
-                        for r in rows:
-                            bg = "rgba(0,255,65,0.12)" if r["type"] == "Buy" else "rgba(255,7,58,0.12)"
-                            sec_cell = f'<a href="{_esc(r["sec_link"])}" target="_blank" rel="noopener">Form 4</a>' if r["sec_link"] else "—"
-                            value_fmt = f"{r['value']:,}" if r["value"] else "—"
-                            body_parts.append(
-                                f'<tr style="background:{bg}">'
-                                f'<td>{_esc(r["date"])}</td><td>{_esc(r["name"])}</td><td>{_esc(r["role"])}</td>'
-                                f'<td>{_esc(r["type"])}</td><td>{r["shares"]:,}</td><td>{value_fmt}</td>'
-                                f'<td>{sec_cell}</td></tr>'
-                            )
-                        table_html = f'<table style="width:100%; border-collapse:collapse;"><caption style="text-align:left; margin-bottom:6px;">Buy rows in green, sell in red.</caption>{header}{"".join(body_parts)}</tbody></table>'
-                        st.markdown(table_html, unsafe_allow_html=True)
+                            if len(rows) >= 30:
+                                break
+                        if not rows:
+                            st.caption("No insider rows match the selected filters.")
+                        else:
+                            # Build HTML table with row colors (green tint = Buy, red tint = Sale)
+                            def _esc(s):
+                                return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;"))
+                            sources = ", ".join(sorted({r["source"] for r in rows if r["source"] and r["source"] != "UNKNOWN"}))
+                            if sources:
+                                st.caption(f"Showing {len(rows)} rows. Source: {sources}.")
+                            header = "<thead><tr><th>Filed</th><th>Trade</th><th>Name</th><th>Role</th><th>Type</th><th>Shares</th><th>Price</th><th>Value ($)</th><th>Open mkt</th><th>SEC</th></tr></thead><tbody>"
+                            body_parts = []
+                            for r in rows:
+                                bg = "rgba(0,255,65,0.12)" if r["type"] == "Buy" else "rgba(255,7,58,0.12)"
+                                sec_cell = f'<a href="{_esc(r["sec_link"])}" target="_blank" rel="noopener">Form 4</a>' if r["sec_link"] else "—"
+                                value_fmt = f"{r['value']:,}" if r["value"] else "—"
+                                price_fmt = f"{float(r['price']):,.2f}" if r["price"] else "—"
+                                body_parts.append(
+                                    f'<tr style="background:{bg}">'
+                                    f'<td>{_esc(r["filing_date"])}</td><td>{_esc(r["date"])}</td><td>{_esc(r["name"])}</td><td>{_esc(r["role"])}</td>'
+                                    f'<td>{_esc(r["type"])}</td><td>{r["shares"]:,}</td><td>{price_fmt}</td><td>{value_fmt}</td><td>{"Yes" if r["open_market"] else "No"}</td>'
+                                    f'<td>{sec_cell}</td></tr>'
+                                )
+                            table_html = f'<table style="width:100%; border-collapse:collapse;"><caption style="text-align:left; margin-bottom:6px;">Buy rows in green, sell in red.</caption>{header}{"".join(body_parts)}</tbody></table>'
+                            st.markdown(table_html, unsafe_allow_html=True)
 
                 
                     # === COMPETITORS ===
@@ -4615,7 +4671,7 @@ def market_analysis_page():
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error removing from watchlist: {e}")
-            except Exception as e:
+            except Exception:
                 st.info("Watchlist is empty. Add some tickers above.")
     
     # Display watchlist summary table
@@ -4625,11 +4681,19 @@ def market_analysis_page():
         db.close()
         
         if watchlist_items:
-            # Header with refresh button
-            header_col1, header_col2 = st.columns([4, 1])
+            # Header with explicit loading controls. Large watchlists can make
+            # yfinance calls for dozens of symbols, so keep ticker search snappy.
+            header_col1, header_col2, header_col3 = st.columns([3, 1, 1])
             with header_col1:
                 st.markdown("### Watchlist summary")
             with header_col2:
+                if st.button(
+                    "Load summary",
+                    help="Fetch current metrics for every watchlist ticker",
+                    key="load_watchlist_summary",
+                ):
+                    st.session_state["market_watchlist_summary_loaded"] = True
+            with header_col3:
                 if st.button("Refresh", help="Clear cached data and fetch fresh info", key="refresh_watchlist"):
                     # Clear ticker info cache for all watchlist items
                     cache_dir = _PROJECT_ROOT / ".market_cache"
@@ -4639,7 +4703,14 @@ def market_analysis_page():
                             if info_cache.exists():
                                 info_cache.unlink()
                                 st.toast(f"Cleared cache for {item.ticker}")
+                    st.session_state["market_watchlist_summary_loaded"] = True
                     st.rerun()
+
+            if not st.session_state.get("market_watchlist_summary_loaded", False):
+                st.caption(
+                    f"{len(watchlist_items)} tickers in watchlist. Load the summary when you want a full refresh."
+                )
+                return
             
             st.caption("Sorted by importance score (technical signals, RSI extremes, earnings proximity)")
             
@@ -6201,10 +6272,22 @@ def main():
     st.sidebar.markdown("---")
     
     # Navigation menu
+    page_options = [
+        "Dashboard",
+        "Portfolio & Taxes",
+        "Market Analysis",
+        "Macro Dashboard",
+        "IPO Vintage Tracker",
+        "Partnerships",
+        "13F Holdings",
+    ]
+    query_page = st.query_params.get("page")
+    page_index = page_options.index(query_page) if query_page in page_options else 0
     page = st.sidebar.radio(
         "Navigation",
-        ["Dashboard", "Portfolio & Taxes", "Market Analysis", "Macro Dashboard", "IPO Vintage Tracker", "Partnerships", "13F Holdings"],
-        label_visibility="collapsed"
+        page_options,
+        index=page_index,
+        label_visibility="collapsed",
     )
     
     st.sidebar.markdown("---")

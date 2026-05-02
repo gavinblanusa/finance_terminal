@@ -7,7 +7,6 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 
 try:
@@ -27,7 +26,9 @@ def build_macro_line_figure(df: pd.DataFrame, spec: MetricSpec) -> go.Figure:
     Line chart: default x window ~last 10y, range selector, optional log y
     (initial claims, M2) to keep recent history readable next to pandemic spikes.
     """
-    fig = px.line(df, y="value", title="")
+    fig = go.Figure()
+    if df is not None and "value" in df:
+        fig.add_trace(go.Scatter(x=df.index, y=df["value"], mode="lines"))
     color = spec.line_color
     fig.update_traces(line=dict(color=color, width=1.7), connectgaps=True)
     y_title = spec.yaxis_hint

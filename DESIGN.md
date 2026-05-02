@@ -83,3 +83,4 @@
 | 2026-04-02 | Research · factors attribution strip | Horizontal bars for factor contribution + residual; presets 21/63 TD + MTD + custom; same research band classes; no mockups (plan-design-review, tool off) |
 | 2026-04-19 | Market Analysis · Tabbed Terminal | Formally adopt high-density tabbed workspaces for data-heavy pages instead of vertical document scrolls. Context stays locked in global headers. |
 | 2026-04-23 | Native Streamlit chrome amber retheme | The retheme is now intentional: amber owns active orientation, focus rings, and true primary actions; slate carries default controls. |
+| 2026-04-27 | Market Analysis · Active Sections | Render only the selected expensive research section so hidden Streamlit tabs do not eagerly execute unrelated data calls; keep the terminal context header consistent. |

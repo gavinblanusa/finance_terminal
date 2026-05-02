@@ -1,8 +1,4 @@
-import sys
-from pathlib import Path
-
 from thirteenf_service import get_13f_holdings_by_quarter, calculate_portfolio_shifts
-from thirteenf_config import THIRTEENF_INSTITUTIONS
 
 def test_portfolio_shifts():
     # Let's test Berkshire Hathaway (Buffett) - CIK 0001067983
@@ -31,7 +27,7 @@ def test_portfolio_shifts():
     for sector, weight in shifts.get("sector_weights", {}).items():
         print(f"{sector}: {weight}%")
         
-    print(f"\n--- PORTFOLIO BETA ---")
+    print("\n--- PORTFOLIO BETA ---")
     print(f"Weighted Beta: {shifts.get('portfolio_beta')}")
 
 if __name__ == "__main__":

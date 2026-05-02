@@ -1,6 +1,6 @@
 # Gavin Financial Terminal
 
-A personal financial intelligence platform modeled after Bloomberg/TradingView, built with Streamlit and PostgreSQL. The app has six main areas: **Dashboard** (portfolio + tax summary), **Portfolio & Taxes** (trades, lots, HIFO), **Market Analysis** (charts, valuation, TradingView-style signals), **IPO Vintage Tracker** (calendar + post-IPO performance), **Partnerships** (SEC 8-K partnership events), and **13F Institutional Holdings** (quarterly 13F filings, compare quarters, by-CUSIP, overlap).
+A personal financial intelligence platform modeled after Bloomberg/TradingView, built with Streamlit and PostgreSQL. The app has **seven** main areas: **Dashboard** (portfolio + tax summary), **Portfolio & Taxes** (trades, lots, HIFO), **Market Analysis** (charts, valuation, TradingView-style signals), **Macro Dashboard** (US FRED indicators, Sahm rule, sector SPDRs vs SPY, pair ratio), **IPO Vintage Tracker** (calendar + post-IPO performance), **Partnerships** (SEC 8-K partnership events), and **13F Institutional Holdings** (quarterly 13F filings, compare quarters, by-CUSIP, overlap).
 
 ## Setup Instructions
 
@@ -60,12 +60,12 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | Path | Purpose |
 |------|---------|
 | `app/` | Application package (all app code) |
-| `app/main.py` | Streamlit app: dashboard, portfolio/taxes, market analysis, IPO tracker, partnerships, 13F holdings |
+| `app/main.py` | Streamlit app: dashboard, portfolio/taxes, market analysis, macro dashboard, IPO tracker, partnerships, 13F holdings |
 | `app/models.py` | SQLAlchemy models: Trades, Watchlist, IPO_Registry, ValuationHistory, CompanyProfile, CompanyFundamentals |
 | `app/db.py` | PostgreSQL connection and session management |
 | `app/tax_engine.py` | HIFO tax lot tracking, gain calculations, CSV import |
 | `app/macro_context.py` | Dashboard macro strip: cross-asset movers (yfinance), optional FRED rates |
-| `app/macro_data.py` / `macro_indicators.py` / `macro_sector.py` | Macro **Dashboard** page: FRED series (file cache + bands), derived **Sahm** from UNRATE, S&P **sector SPDRs** vs **SPY** and pair ratio chart |
+| `app/macro_data.py` / `macro_indicators.py` / `macro_sector.py` / `macro_charts.py` | Macro **Dashboard** page: FRED series (file cache + bands), derived **Sahm** from UNRATE, S&P **sector SPDRs** vs **SPY**, pair ratio chart, Plotly time-range + log-y helpers |
 | `app/portfolio_insights.py` | Dashboard PORT-lite: sector weights, concentration, value-weighted beta vs SPY |
 | `app/factor_exposure.py` | Dashboard Fama–French 5-factor loadings + cumulative attribution strip (estimation vs attribution windows, residual) |
 | `app/tca_estimate.py` | Dashboard pre-trade impact estimate (ADV, participation, illustrative square-root heuristic) |
@@ -77,7 +77,7 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/analytics_export.py` | Compose macro + PORT + factors payload for REST |
 | `app/terminal_api.py` | FastAPI: `/v1/macro`, `/v1/fi`, `/v1/portfolio`, `/v1/analytics/dashboard` (optional attribution query params) |
 | `app/relevant_news.py` | Dashboard ranked headlines across portfolio + watchlist |
-| `app/market_data.py` | OHLCV cache, valuation (P/E, revenue), TradingView-style signals, company profile/fundamentals/news |
+| `app/market_data.py` | OHLCV cache, valuation (P/E, revenue), TradingView-style signals, company profile/fundamentals/news, insider transaction fallback orchestration |
 | `app/market_warehouse.py` | Optional local OHLCV from [market-data-warehouse](https://github.com/joemccann/market-data-warehouse) (Parquet bronze or DuckDB) when env vars set |
 | `app/openbb_fetch.py` | OpenBB fetch kernel: lazy `obb`, provider chain, timeouts, `gft.openbb` logging |
 | `app/openbb_provider_registry.py` | Provider try-order per dataset (`OPENBB_PROVIDER_CHAINS`); drift-checked vs `docs/OPENBB_COVERAGE.md` |
@@ -85,6 +85,7 @@ See **`docs/DATA_LAYER_REFERENCE.md`** (HTTP API section) for paths and examples
 | `app/financetoolkit_adapter.py` | FinanceToolkit layer (fundamentals, optional current P/E and PEG) |
 | `app/api_clients.py` | Price/OHLCV APIs: Polygon, Twelve Data, EODHD (with rate limits) |
 | `app/ipo_service.py` | IPO calendar (Finnhub), vintage performance, price history |
+| `app/insider_service.py` | SEC EDGAR Form 4 / 4-A insider transactions for Market Analysis |
 | `app/edgar_service.py` | SEC EDGAR 8-K filings, partnership-event extraction |
 | `app/thirteenf_service.py` | SEC 13F institutional holdings |
 | `app/partnerships_config.py` | Config: watched tickers and counterparties for partnerships page |
@@ -139,6 +140,12 @@ The tax engine uses **Highest-In-First-Out (HIFO)** methodology:
 - This minimizes taxable gains for tax optimization
 - Tracks individual tax lots from each purchase
 
+### Macro Dashboard
+- **FRED + Yahoo context:** R/Y/G health pills, economic temperature bar, per-metric line charts (10Y default view, 1Y–All range control, log y for spike-heavy series such as initial claims and M2), FRED as-of under each read
+- **Sahm rule:** Derived locally from the unemployment (**UNRATE**) series
+- **Sector sleeve:** S&P 500 **sector SPDRs** vs **SPY** (delayed Yahoo quotes), 1d / 5d / 1m and relative 1m; optional **pair ratio** chart (rebased, e.g. XLF / XLK)
+- **Refresh macro data:** Clears on-disk **`.macro_cache/`** and reloads; shows last click time and cache file freshness
+
 ### Market Analysis
 - **Options · ATM IV term structure** (BVOL/OVME-lite): implied vol at strike nearest spot across listed expiries (Yahoo Finance chains); line chart vs days to expiry and expandable table—not a dealer vol surface
 - **Options · Black–Scholes**: European call/put **theory** prices from spot/strike/DTE/IV; risk-free default from ^TNX (cached); optional preset rows from the IV table above (`scipy`)
@@ -146,6 +153,7 @@ The tax engine uses **Highest-In-First-Out (HIFO)** methodology:
 - **Price chart**: Primary chart is TradingView-style via `streamlit_lightweight_charts` and `chart_utils` (candlestick + volume); Plotly is used for the TradingView signals chart and rescaling.
 - **Valuation & DCF**: P/E and revenue over time (yfinance, Alpha Vantage, Finnhub, FMP), combined with a **Discounted Cash Flow (DCF)** baseline tool extracting WACC and FCF estimates directly from financial statements.
 - **TradingView-style signals**: Stochastic RSI, momentum, supply/demand zones; cached per ticker/timeframe
+- **Corporate Activity**: SEC EDGAR Form 4 insider rows first, Finnhub fallback when configured, OpenInsider cross-check link, officer/director and open-market filters
 - **Competitors**: Peer comparison (same industry + similar market cap via FMP screener); optional sort by description similarity; user overrides (add/remove peers) stored in DB; table with ticker, name, sector, industry, market cap, P/E, revenue TTM. Optional env: `PEERS_COUNTRY`, `PEERS_EXCHANGE`.
 - Company profile, fundamentals, and news (FMP, Finnhub)
 
@@ -176,8 +184,8 @@ This section gives future AIs and refactors enough context to navigate the codeb
 ### Entry points and routing
 
 - **App entry**: From project root, `streamlit run app/main.py` → `app/main.py` → `main()` → sidebar `st.sidebar.radio` chooses page.
-- **Pages** (all in `app/main.py`): `dashboard_page()`, `portfolio_taxes_page()`, `market_analysis_page()`, `ipo_tracker_page()`, `partnerships_page()`, `thirteenf_page()`. Sidebar order: Dashboard, Portfolio & Taxes, Market Analysis, IPO Vintage Tracker, Partnerships, 13F Holdings.
-- **Module usage**: Dashboard/Portfolio use `db`, `models`, `tax_engine`. Market Analysis uses `market_data` (which can use `financetoolkit_adapter`, `openbb_adapter`, and `api_clients` for OHLCV and fundamentals). IPO uses `ipo_service`. Partnerships uses `edgar_service`, `partnerships_config`, `partnership_signal`, and `partnership_enrichment`. 13F uses `thirteenf_service` and `thirteenf_config`. All app code lives under `app/`; caches (`.market_cache/`, `.ipo_cache/`, `.edgar_cache/`) and `.env` stay at project root.
+- **Pages** (all in `app/main.py`): `dashboard_page()`, `portfolio_taxes_page()`, `market_analysis_page()`, `macro_dashboard_page()`, `ipo_tracker_page()`, `partnerships_page()`, `thirteenf_page()`. Sidebar order: Dashboard, Portfolio & Taxes, Market Analysis, Macro Dashboard, IPO Vintage Tracker, Partnerships, 13F Holdings.
+- **Module usage**: Dashboard/Portfolio use `db`, `models`, `tax_engine`. Market Analysis uses `market_data` (which can use `financetoolkit_adapter`, `openbb_adapter`, and `api_clients` for OHLCV and fundamentals). **Macro Dashboard** uses `macro_data`, `macro_indicators`, `macro_sector`, `macro_charts`, and `openbb_adapter` (FRED file cache under `.macro_cache/`). IPO uses `ipo_service`. Partnerships uses `edgar_service`, `partnerships_config`, `partnership_signal`, and `partnership_enrichment`. 13F uses `thirteenf_service` and `thirteenf_config`. All app code lives under `app/`; caches (`.market_cache/`, `.macro_cache/`, `.ipo_cache/`, `.edgar_cache/`) and `.env` stay at project root.
 
 ### Where key logic lives
 
@@ -185,6 +193,7 @@ This section gives future AIs and refactors enough context to navigate the codeb
 |--------|-------------------|--------|
 | Portfolio aggregation, tax summary | `tax_engine.py` (`TaxEngine`, `get_portfolio_summary`) | Reads `Trades` from DB via session passed in |
 | Dashboard macro strip, PORT-lite, ranked news | `macro_context.py`, `portfolio_insights.py`, `relevant_news.py`, `main.py` (`_cached_*`) | Movers: yfinance; rates: FRED if key set; sectors/profiles: `get_company_profile`; beta: `fetch_ohlcv` + SPY; news: `fetch_company_news` per ticker |
+| Macro **Dashboard** page (FRED + Sahm + sectors) | `macro_data.py`, `macro_indicators.py`, `macro_sector.py`, `macro_charts.py`, `openbb_adapter.py` | On-disk **`.macro_cache/`**; Streamlit `st.cache_data` for series fetch and sector momentum table |
 | Trade CRUD, lots, CSV import | `main.py` (portfolio_taxes_page) + `tax_engine.py` (HIFO, `import_trades_from_csv`) | Trades stored in `models.Trades` |
 | OHLCV fetch, cache, indicators | `market_data.py` (`fetch_ohlcv`, …), `market_warehouse.py` (optional), `openbb_adapter.py` | JSON cache `.market_cache/`; optional MDW Parquet/DuckDB if env set; then OpenBB, yfinance, `api_clients` |
 | Valuation (P/E, revenue) | `market_data.py` (`fetch_valuation_data`, …) | DB table `valuation_history`; also Alpha Vantage / Finnhub / FMP |
@@ -203,7 +212,7 @@ Load from `.env` in project root. Used by:
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | `db.py` | PostgreSQL connection |
 | `ALPHA_VANTAGE_API_KEY` or `ALPHA_API_KEY` | `market_data.py`, `tax_engine.py` | Valuation/earnings; price fallback |
 | `FMP_API_KEY` | `market_data.py`, `financetoolkit_adapter.py` | Company profile, fundamentals; FinanceToolkit uses it for ratio data when enabled |
-| `FINNHUB_API_KEY` | `market_data.py`, `ipo_service.py` | Earnings, news; IPO calendar |
+| `FINNHUB_API_KEY` | `market_data.py`, `ipo_service.py` | Earnings, news; IPO calendar; fallback insider transactions |
 | `MASSIVE_API_KEY` | `market_data.py` (via `api_clients`), `openbb_fetch.py` | Polygon price/OHLCV (OpenBB uses `POLYGON_API_KEY`; `openbb_fetch` copies from `MASSIVE_API_KEY` if unset) |
 | `POLYGON_API_KEY` | `openbb_fetch.py` | OpenBB Polygon provider (optional; if unset, copied from `MASSIVE_API_KEY`) |
 | `OPENBB_REQUEST_TIMEOUT_SEC` | `openbb_fetch.py` | Per-try timeout for OpenBB provider calls (default: 30) |
@@ -223,13 +232,14 @@ Load from `.env` in project root. Used by:
 ### Persistence and caches
 
 - **PostgreSQL** (`db.py` + `models.py`): `trades`, `watchlist`, `ipo_registry`, `valuation_history`, `company_profile`, `company_fundamentals`, `peer_overrides`.
-- **File caches** (project root): `.market_cache/` (OHLCV, ticker info, TV signals, Alpha Vantage responses, peers candidates), `.ipo_cache/` (IPO calendar JSON), `.edgar_cache/` (EDGAR submissions, 8-K, `partnership_events.json`, `partnership_filer_market_caps.json`, negative cache for skipped 8-Ks).
+- **File caches** (project root): `.market_cache/` (OHLCV, ticker info, TV signals, Alpha Vantage responses, peers candidates), `.macro_cache/` (Macro Dashboard FRED series), `.ipo_cache/` (IPO calendar JSON), `.edgar_cache/` (EDGAR submissions, Form 4 insider rows, 8-K, `partnership_events.json`, `partnership_filer_market_caps.json`, negative cache for skipped 8-Ks).
 - **In-memory**: `tax_engine` price cache (15 min TTL).
 
 ### Conventions and gotchas
 
 - **DB session**: Pages get a session via `get_db_session()`; pass it into `TaxEngine` and any code that reads/writes `Trades` or other models. Don’t create a new engine in feature modules.
 - **Market data rate limits**: Alpha Vantage (5/min), EODHD (20/day), etc. See `market_data.py` and `api_clients.py` for throttling. Prefer cache/DB before external calls.
+- **Insider transactions**: Market Analysis uses SEC EDGAR Form 4 as the primary free source via `insider_service.py`; Finnhub is a configured fallback; OpenInsider is linked for human cross-checking only.
 - **Valuation**: Already DB-first in `fetch_valuation_data()`; TradingView and valuation have “Save” buttons—see `docs/MARKET_ANALYSIS_DATA_REFACTOR.md` for planned auto-save and freshness behavior.
 
 ### More detail
@@ -240,4 +250,3 @@ Load from `.env` in project root. Used by:
 - **`docs/ARCHITECTURE.md`** — Data flow, page→module map, and refactor notes.
 - **`docs/OPENBB_COVERAGE.md`** — OpenBB datasets, provider chains, and CI drift check vs the registry.
 - **`docs/MARKET_ANALYSIS_DATA_REFACTOR.md`** — Refactor plan for market analysis data (auto-save, DB/cache-first).
-

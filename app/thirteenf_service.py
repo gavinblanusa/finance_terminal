@@ -9,7 +9,7 @@ import json
 import re
 import time
 import calendar
-from datetime import datetime, timedelta, date as date_type
+from datetime import date as date_type
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 import xml.etree.ElementTree as ET
@@ -484,7 +484,6 @@ def get_13f_filings_for_institution(cik: str) -> List[Dict]:
     submissions = _get_submissions_for_cik(cik)
     if not submissions:
         return []
-    name = (submissions.get("name") or "").strip()
     filings_list = _parse_recent_13f_hr(submissions)
     cik_padded = _cik_pad(cik)
     result = []
@@ -778,8 +777,6 @@ def calculate_portfolio_shifts(holdings: List[Dict]) -> Dict[str, Any]:
     Enrich a list of 13F holdings with Sector, Industry, and Beta to map macro risk.
     Calculates the portfolio-level weighted Beta and sector allocations.
     """
-    import math
-
     enriched = []
     total_val = sum((h.get("value_thousands", 0) for h in holdings))
     if total_val == 0:

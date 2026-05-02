@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Project pointers: **README.md** (setup, structure, API), **AGENTS.md** (Cursor Cloud / VM notes, **gstack `/learn` paths**, CI/pytest), **docs/ARCHITECTURE.md** (page-to-module map), **docs/OPENBB_COVERAGE.md** (OpenBB inventory + provider order), **docs/DATA_LAYER_REFERENCE.md** (data contracts + optional **`GFT_MARKET_WAREHOUSE_*`** local OHLCV), **CHANGELOG.md** / **VERSION** (releases).
+Project pointers: **README.md** (setup, structure, API), **AGENTS.md** (Cursor Cloud / VM notes, **gstack `/learn` paths**, CI/pytest), **docs/ARCHITECTURE.md** (page-to-module map), **docs/OPENBB_COVERAGE.md** (OpenBB inventory + provider order), **docs/DATA_LAYER_REFERENCE.md** (data contracts + optional **`GFT_MARKET_WAREHOUSE_*`** local OHLCV + **`.macro_cache/`** for Macro Dashboard FRED files), **CHANGELOG.md** / **VERSION** (releases).
 
 ## Design system
 
